@@ -1,0 +1,37 @@
+# Android / Gradle build artifacts
+build/
+.gradle/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# APK outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Native build
+*.o
+*.so
+*.a
+
+# Models — NEVER commit
+*.gguf
+*.ggml
+*.safetensors
+*.bin
+app/src/main/assets/models/
+
+# macOS / editor
+.DS_Store
+*.swp
+*~
+
+# Secrets
+keystore.properties
+*.jks
+*.keystore
