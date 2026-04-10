@@ -16,6 +16,7 @@ import com.zeeshan.androidllmserver.auth.AuthManager
 import com.zeeshan.androidllmserver.http.LlmHttpServer
 import com.zeeshan.androidllmserver.llm.LlmBridge
 import com.zeeshan.androidllmserver.prefs.ServerPreferences
+import com.zeeshan.androidllmserver.sd.SdBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,8 +63,14 @@ class LlmService : Service() {
     var bridge: LlmBridge? = null
         private set
 
+    var sdBridge: SdBridge? = null
+        private set
+
     val isModelLoaded: Boolean
-        get() = bridge != null
+        get() = bridge != null || sdBridge != null
+
+    val isImageModel: Boolean
+        get() = sdBridge != null
 
     private var _isGenerating = false
     val isGenerating: Boolean get() = _isGenerating
@@ -119,14 +126,27 @@ class LlmService : Service() {
 
         loadJob?.cancel()
         loadJob = serviceScope.launch {
+            val modelFileName = modelPath.substringAfterLast('/')
+            val isSD = modelPath.endsWith(".safetensors", ignoreCase = true) ||
+                       modelPath.endsWith(".ckpt", ignoreCase = true)
+
             try {
-                LlmBridge.ensureNativeLoaded()
-                val b = LlmBridge()
-                b.load(modelPath, nCtx = serverPrefs.nCtx, nThreads = serverPrefs.nThreads, useGpu = serverPrefs.useGpu)
-                bridge = b
-                // Persist the model path so the boot receiver can restart with the same model.
+                if (isSD) {
+                    SdBridge.ensureNativeLoaded()
+                    val sb = SdBridge()
+                    sb.load(modelPath, useGpu = serverPrefs.useGpu)
+                    sdBridge = sb
+                    bridge = null
+                    Log.i(TAG, "SD model loaded: $modelPath")
+                } else {
+                    LlmBridge.ensureNativeLoaded()
+                    val b = LlmBridge()
+                    b.load(modelPath, nCtx = serverPrefs.nCtx, nThreads = serverPrefs.nThreads, useGpu = serverPrefs.useGpu)
+                    bridge = b
+                    sdBridge = null
+                    Log.i(TAG, "LLM model loaded: $modelPath")
+                }
                 serverPrefs.lastModelPath = modelPath
-                Log.i(TAG, "Model loaded: $modelPath")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load model", e)
                 updateNotification("LLM Server — error: ${e.message}")
@@ -135,12 +155,12 @@ class LlmService : Service() {
 
             // Start HTTP server now that the model is loaded.
             try {
-                val modelFileName = modelPath.substringAfterLast('/')
                 httpServer = LlmHttpServer(
-                    bridge = bridge!!,
+                    bridge = bridge,
                     modelName = modelFileName,
                     port = HTTP_PORT,
                     authManager = authManager,
+                    sdBridge = sdBridge,
                 ).also { it.start() }
                 updateNotification("LLM Server — idle (port $HTTP_PORT)")
                 Log.i(TAG, "HTTP server started on port $HTTP_PORT")
@@ -159,9 +179,15 @@ class LlmService : Service() {
             try {
                 bridge?.free()
             } catch (e: Exception) {
-                Log.e(TAG, "Error freeing model", e)
+                Log.e(TAG, "Error freeing LLM model", e)
             }
             bridge = null
+            try {
+                sdBridge?.free()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error freeing SD model", e)
+            }
+            sdBridge = null
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

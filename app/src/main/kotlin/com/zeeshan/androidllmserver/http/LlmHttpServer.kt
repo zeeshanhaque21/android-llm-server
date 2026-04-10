@@ -27,7 +27,7 @@ import kotlinx.serialization.json.Json
 private const val TAG = "LlmHttpServer"
 
 class LlmHttpServer(
-    private val bridge: LlmBridge,
+    private val bridge: LlmBridge?,
     private val modelName: String,
     private val port: Int = 8085,
     private val authManager: AuthManager? = null,
@@ -125,8 +125,10 @@ class LlmHttpServer(
 
     private fun Application.configureRouting() {
         routing {
-            installOpenAiRoutes(bridge, modelName)
-            installOllamaRoutes(bridge, modelName)
+            if (bridge != null) {
+                installOpenAiRoutes(bridge, modelName)
+                installOllamaRoutes(bridge, modelName)
+            }
             installImageRoutes(sdBridge)
         }
     }
