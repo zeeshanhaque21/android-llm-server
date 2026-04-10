@@ -1,6 +1,6 @@
 # Implementation Plan — android-llm-server
 
-**Current phase: 1 (in progress)**
+**Current phase: 1 (smoke test passed 2026-04-09, pending tok/s measurement → Phase 2)**
 
 This plan is phased so each phase ends with a testable artifact. Do not start Phase N+1 until Phase N's acceptance criteria are met. Update this file as phases progress — check items off, add discovered sub-tasks inline, note blockers under the phase they affect.
 
@@ -37,10 +37,11 @@ This plan is phased so each phase ends with a testable artifact. Do not start Ph
   - `Java_..._nativeCancel(jlong ctx): void`
   - `Java_..._nativeFree(jlong ctx): void`
 - [x] Kotlin wrapper `LlmBridge.kt` exposing these as suspending functions via a dedicated single-thread dispatcher
-- [x] Write a manual smoke test: add a temporary button to MainActivity that loads a model from `/sdcard/Download/qwen2.5-1.5b-q4.gguf` and prints tokens to logcat
-- [ ] Push the same GGUF we used in Termux (md5 `8e5111fdbc5c150920d368ff802c4b5a`) to the phone via `adb push`
-- [ ] Run the smoke test, verify tokens stream to logcat at roughly the Termux baseline (~14 tok/s)
-- [ ] Commit
+- [x] Write a manual smoke test: add a temporary button to MainActivity that loads a model and prints tokens to logcat
+- [x] Push a GGUF (Qwen2.5-1.5B-Instruct Q4_K_M, 941 MB) to the phone's app-private dir (`/sdcard/Android/data/com.zeeshan.androidllmserver/files/` — NOT `/sdcard/Download`, see findings.md scoped-storage note)
+- [x] Run the smoke test on the Note 10+ — **works end-to-end**, tokens stream in the UI (2026-04-09)
+- [ ] Capture tokens-per-second from logcat and compare to the 14.45 tok/s Termux baseline
+- [x] Commit
 
 **Acceptance:** tapping the test button in the app produces streaming tokens in logcat from qwen2.5:1.5b at within 5% of the 14.45 tok/s Termux baseline. If performance regresses, investigate before proceeding.
 

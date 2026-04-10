@@ -16,15 +16,19 @@ android {
         versionName = "0.1.0"
 
         ndk {
-            // v1 ships arm64 only. x86_64 is kept for emulator dev.
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // arm64 only. We don't use emulators (see CLAUDE.md testing
+            // strategy), and dropping x86_64 roughly halves native build
+            // time since llama.cpp is compiled per-ABI.
+            abiFilters += listOf("arm64-v8a")
         }
 
         externalNativeBuild {
             cmake {
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared",
-                    "-DCMAKE_BUILD_TYPE=Release"
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    // Parallelize the underlying ninja build across all cores.
+                    "-DCMAKE_BUILD_PARALLEL_LEVEL=24"
                 )
                 cppFlags += "-O3"
             }

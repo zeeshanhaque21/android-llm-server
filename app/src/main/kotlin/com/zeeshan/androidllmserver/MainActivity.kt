@@ -1,7 +1,6 @@
 package com.zeeshan.androidllmserver
 
 import android.os.Bundle
-import android.os.Environment
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -30,12 +29,12 @@ import java.io.File
 
 private const val TAG = "MainActivity"
 
-// Phase 1 smoke test: hard-coded path to the same GGUF we used in Termux.
-// Push it with: adb push qwen2.5-1.5b-q4.gguf /sdcard/Download/
-private val SMOKE_MODEL = File(
-    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-    "qwen2.5-1.5b-q4.gguf"
-)
+// Phase 1 smoke test. The model lives in the app's private external
+// files dir, which does NOT require any runtime permission (scoped
+// storage). Push it with:
+//   adb push qwen2.5-1.5b-instruct-q4_k_m.gguf \
+//     /sdcard/Android/data/com.zeeshan.androidllmserver/files/
+private const val SMOKE_MODEL_NAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 private const val SMOKE_PROMPT =
     "<|im_start|>user\nSay hello in one short sentence.<|im_end|>\n<|im_start|>assistant\n"
 
@@ -52,6 +51,9 @@ class MainActivity : ComponentActivity() {
                     val bridge = remember { LlmBridge() }
                     var status by remember { mutableStateOf("idle") }
                     var output by remember { mutableStateOf("") }
+                    val smokeModel = remember {
+                        File(getExternalFilesDir(null), SMOKE_MODEL_NAME)
+                    }
 
                     Column(
                         modifier = Modifier
@@ -64,7 +66,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("android-llm-server", style = MaterialTheme.typography.titleLarge)
                         Text("phase 1 smoke test", style = MaterialTheme.typography.bodySmall)
-                        Text("model: ${SMOKE_MODEL.absolutePath}")
+                        Text("model: ${smokeModel.absolutePath}")
                         Text("status: $status")
 
                         Button(onClick = {
@@ -72,7 +74,7 @@ class MainActivity : ComponentActivity() {
                                 output = ""
                                 status = "loading model…"
                                 runCatching {
-                                    bridge.load(SMOKE_MODEL.absolutePath)
+                                    bridge.load(smokeModel.absolutePath)
                                     status = "generating…"
                                     bridge.generate(SMOKE_PROMPT, maxTokens = 128).collect { tok ->
                                         output += tok

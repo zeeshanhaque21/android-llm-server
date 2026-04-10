@@ -112,6 +112,30 @@ Eval rate:   14.45 tok/s
 
 This is the number to beat. The native app build should match within 5% — if it regresses, investigate compiler flags.
 
+## Phase 1 discoveries (2026-04-09)
+
+### Scoped storage blocks `/sdcard/Download` reads from apps
+
+The initial smoke test loaded the model from `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)`. This fails silently on API 29+ with scoped storage — `nativeInit` gets a path it can `stat()` but can't open for reading. The fix is to use `context.getExternalFilesDir(null)`, which maps to `/sdcard/Android/data/<pkg>/files/`. No runtime permission needed, and the app's UID owns the directory. Model push command becomes:
+
+```
+adb push model.gguf /sdcard/Android/data/com.zeeshan.androidllmserver/files/
+```
+
+This is also the path the Phase 3 model-download manager should write to.
+
+### `LLAMA_BUILD_COMMON=ON` needed when examples are off
+
+Setting `LLAMA_BUILD_EXAMPLES=OFF` in CMake also disables the `common` helper library (libcommon), which provides sampling utilities, chat template application, and arg helpers. Our JNI bridge links against `common`, so the final link of `libllmbridge.so` fails with `ld.lld: error: unable to find library -lcommon`. Fix: explicitly set `LLAMA_BUILD_COMMON=ON` in CMakeLists.txt.
+
+### ADB wireless debugging on Samsung One UI
+
+Samsung's One UI aggressively kills the wireless-debug adbd when the screen is off, during large file transfers, or seemingly at random. Key observations:
+- ~1 GB model push at 12-18 MB/s sometimes "succeeds" per adb stats but writes a truncated file
+- The port changes every time wireless debugging is toggled off/on
+- `adb install -r` via streamed install consistently fails; the workaround is `adb push <apk> /sdcard/Download/` and sideload from the phone's Files app
+- For stability: keep screen on (Developer options → "Stay awake" while charging) and use `adb tcpip 5555` for a pinned port once connected
+
 ## Open questions to decide during Phase 1
 
 - **JNI bridge style**: (a) expose only primitive llama.cpp calls and build the chat templating / sampling loop in Kotlin, or (b) expose a higher-level `generate(prompt, params)` streaming callback from C++. **Leaning toward (b)** because it's less JNI traffic per token and lets us reuse llama-server's sampling code.
