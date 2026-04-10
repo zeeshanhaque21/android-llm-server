@@ -1,6 +1,6 @@
 # Implementation Plan — android-llm-server
 
-**Current phase: 0 (not started)**
+**Current phase: 1 (in progress)**
 
 This plan is phased so each phase ends with a testable artifact. Do not start Phase N+1 until Phase N's acceptance criteria are met. Update this file as phases progress — check items off, add discovered sub-tasks inline, note blockers under the phase they affect.
 
@@ -10,10 +10,10 @@ This plan is phased so each phase ends with a testable artifact. Do not start Ph
 
 **Goal:** empty Android Studio project that builds an APK that installs, runs, and shows a blank screen.
 
-- [ ] Install Android Studio (if not already) — minimum Hedgehog (2023.1.1) for AGP 8.2
-- [ ] Create new project: **Empty Activity (Compose)**, Kotlin, min SDK 29, target SDK 35, package `com.zeeshan.androidllmserver`
-- [ ] Migrate the generated project into this repo (`app/` directory)
-- [ ] Add `.gitignore` for Android (the standard one — `build/`, `.gradle/`, `local.properties`, `*.apk`, `*.iml`, `.idea/`)
+- [x] Install Android Studio (if not already) — minimum Hedgehog (2023.1.1) for AGP 8.2
+- [x] Create new project: **Empty Activity (Compose)**, Kotlin, min SDK 29, target SDK 35, package `com.zeeshan.androidllmserver`
+- [x] Migrate the generated project into this repo (`app/` directory)
+- [x] Add `.gitignore` for Android (the standard one — `build/`, `.gradle/`, `local.properties`, `*.apk`, `*.iml`, `.idea/`)
 - [ ] Verify `./gradlew assembleDebug` produces an APK
 - [ ] Install on the Note 10+ via `adb install` or Android Studio, confirm blank screen loads
 - [ ] Commit
@@ -26,18 +26,18 @@ This plan is phased so each phase ends with a testable artifact. Do not start Ph
 
 **Goal:** prove we can load a GGUF model and generate tokens from Kotlin on the phone. Pure JNI wiring. No HTTP yet.
 
-- [ ] Add llama.cpp as a git submodule at `app/src/main/cpp/llama.cpp`, pin to a known-good commit
-- [ ] Create `app/src/main/cpp/CMakeLists.txt` that builds:
+- [x] Add llama.cpp as a git submodule (pinned at d132f22)
+- [x] Create `app/src/main/cpp/CMakeLists.txt` that builds:
   - llama.cpp as a static lib (`LLAMA_BUILD_EXAMPLES=OFF`, `LLAMA_BUILD_TESTS=OFF`, `LLAMA_BUILD_SERVER=OFF`)
   - our thin JNI shim (`llm_bridge.cpp`) that links against it
-- [ ] Wire CMake into Gradle via `externalNativeBuild { cmake { ... } }` in `app/build.gradle.kts`
-- [ ] Implement minimal JNI surface in `llm_bridge.cpp`:
+- [x] Wire CMake into Gradle via `externalNativeBuild { cmake { ... } }` in `app/build.gradle.kts`
+- [x] Implement minimal JNI surface in `llm_bridge.cpp`:
   - `Java_com_zeeshan_androidllmserver_llm_LlmBridge_nativeInit(jstring modelPath): jlong` → returns opaque context pointer
   - `Java_..._nativeGenerate(jlong ctx, jstring prompt, jint maxTokens, jobject callback): void` → calls callback per token
   - `Java_..._nativeCancel(jlong ctx): void`
   - `Java_..._nativeFree(jlong ctx): void`
-- [ ] Kotlin wrapper `LlmBridge.kt` exposing these as suspending functions via a dedicated single-thread dispatcher
-- [ ] Write a manual smoke test: add a temporary button to MainActivity that loads a model from `/sdcard/Download/qwen2.5-1.5b-q4.gguf` and prints tokens to logcat
+- [x] Kotlin wrapper `LlmBridge.kt` exposing these as suspending functions via a dedicated single-thread dispatcher
+- [x] Write a manual smoke test: add a temporary button to MainActivity that loads a model from `/sdcard/Download/qwen2.5-1.5b-q4.gguf` and prints tokens to logcat
 - [ ] Push the same GGUF we used in Termux (md5 `8e5111fdbc5c150920d368ff802c4b5a`) to the phone via `adb push`
 - [ ] Run the smoke test, verify tokens stream to logcat at roughly the Termux baseline (~14 tok/s)
 - [ ] Commit
