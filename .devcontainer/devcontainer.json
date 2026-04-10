@@ -1,0 +1,60 @@
+{
+  "name": "android-llm-server",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+
+  // Isolate: only this project is visible inside the container.
+  // CRITICAL: we mount the workspace at the SAME absolute path it has on
+  // the host (/mnt/docs/...), and we use the same $HOME (/home/zeeshan).
+  // Reason: Claude plugins and hooks often bake absolute paths into
+  // their on-disk state (e.g. installed_plugins.json references
+  // /home/zeeshan/.claude/plugins/marketplaces/...). If the container
+  // home is /home/vscode, those probes fail and hook registration
+  // silently breaks. Keeping paths identical makes host and container
+  // indistinguishable to anything path-sensitive.
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind,consistency=delegated",
+
+  "mounts": [
+    // Carry over Claude credentials, settings, plugins, MCP config,
+    // sessions, and history. Target paths mirror the host exactly.
+    "source=${localEnv:HOME}/.claude,target=${localEnv:HOME}/.claude,type=bind,consistency=delegated",
+    "source=${localEnv:HOME}/.claude.json,target=${localEnv:HOME}/.claude.json,type=bind,consistency=delegated"
+  ],
+
+  "remoteUser": "zeeshan",
+  "containerUser": "zeeshan",
+  "updateRemoteUserUID": true,
+
+  "runArgs": [
+    "--hostname=android-llm-devcontainer"
+  ],
+
+  "containerEnv": {
+    "ANDROID_HOME": "/opt/android-sdk",
+    "ANDROID_SDK_ROOT": "/opt/android-sdk"
+  },
+
+  "remoteEnv": {
+    // Convenience: `claude` inside the container runs with
+    // --dangerously-skip-permissions by default. The container itself is
+    // the sandbox — it can only see this project directory plus the
+    // Claude state mounts above.
+    "CLAUDE_ALIAS_NOTE": "Use 'yolo' for claude --dangerously-skip-permissions"
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "mathiasfrohlich.Kotlin",
+        "fwcd.kotlin",
+        "vscjava.vscode-gradle",
+        "ms-vscode.cpptools"
+      ]
+    }
+  }
+}
