@@ -117,8 +117,13 @@ fun ModelsScreen(
         }
     }
 
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val plusEnabled = remember(ctx) { com.zeeshan.androidllmserver.prefs.ServerPreferences(ctx).plusEnabled }
     val installedFileNames = installedModels.map { it.name }.toSet()
-    val availableCatalog = catalog.filter { it.fileName !in installedFileNames }
+    val availableCatalog = catalog.filter { entry ->
+        entry.fileName !in installedFileNames &&
+        (!entry.plus || plusEnabled)
+    }
 
     Scaffold(
         topBar = {

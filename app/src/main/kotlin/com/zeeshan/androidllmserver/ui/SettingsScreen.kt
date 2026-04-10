@@ -251,6 +251,28 @@ fun SettingsDialog(
 
                 HorizontalDivider()
 
+                // --- Plus Section ---
+                Text("Plus", style = MaterialTheme.typography.titleMedium)
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Enable Plus models", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = prefs.plusEnabled,
+                        onCheckedChange = { prefs.plusEnabled = it },
+                    )
+                }
+                Text(
+                    "Shows additional image generation models in the catalog",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                HorizontalDivider()
+
                 // --- About Section ---
                 Text("About", style = MaterialTheme.typography.titleMedium)
                 Text(

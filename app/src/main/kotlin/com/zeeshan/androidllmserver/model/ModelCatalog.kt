@@ -11,6 +11,8 @@ data class CatalogEntry(
     val url: String,
     val sizeBytes: Long,
     val description: String,
+    val type: String = "llm",   // "llm" or "image"
+    val plus: Boolean = false,  // hidden unless Plus enabled in settings
 )
 
 class ModelCatalog(private val context: Context) {
