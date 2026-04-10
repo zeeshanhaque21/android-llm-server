@@ -42,6 +42,7 @@ class LlmService : Service() {
 
         private const val CHANNEL_ID = "llm_server"
         private const val NOTIF_ID = 1
+        private const val HTTP_PORT = 8085
     }
 
     // --- Binder for Activity / HTTP layer access ---
@@ -115,16 +116,22 @@ class LlmService : Service() {
                 val b = LlmBridge()
                 b.load(modelPath)
                 bridge = b
-
-                // Start HTTP server now that the model is loaded.
-                val modelFileName = modelPath.substringAfterLast('/')
-                httpServer = LlmHttpServer(b, modelFileName).also { it.start() }
-
-                updateNotification("LLM Server — idle (port 8080)")
-                Log.i(TAG, "Model loaded: $modelPath, HTTP server started")
+                Log.i(TAG, "Model loaded: $modelPath")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load model", e)
                 updateNotification("LLM Server — error: ${e.message}")
+                return@launch
+            }
+
+            // Start HTTP server now that the model is loaded.
+            try {
+                val modelFileName = modelPath.substringAfterLast('/')
+                httpServer = LlmHttpServer(bridge!!, modelFileName, port = HTTP_PORT).also { it.start() }
+                updateNotification("LLM Server — idle (port $HTTP_PORT)")
+                Log.i(TAG, "HTTP server started on port $HTTP_PORT")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start HTTP server", e)
+                updateNotification("LLM Server — model loaded, HTTP error: ${e.message}")
             }
         }
     }
