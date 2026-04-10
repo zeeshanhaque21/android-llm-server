@@ -50,6 +50,7 @@ fun SettingsDialog(
     // Server settings state
     var portText by remember { mutableStateOf(prefs.httpPort.toString()) }
     var autoStart by remember { mutableStateOf(prefs.autoStartOnBoot) }
+    var useGpu by remember { mutableStateOf(prefs.useGpu) }
 
     // Auth state
     var authEnabled by remember { mutableStateOf(authManager.authEnabled) }
@@ -124,6 +125,29 @@ fun SettingsDialog(
                         onCheckedChange = {
                             autoStart = it
                             prefs.autoStartOnBoot = it
+                        },
+                    )
+                }
+
+                // GPU toggle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Use GPU (Vulkan)", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Offload layers to GPU. Restart server to apply.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = useGpu,
+                        onCheckedChange = {
+                            useGpu = it
+                            prefs.useGpu = it
                         },
                     )
                 }

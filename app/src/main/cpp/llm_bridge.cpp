@@ -53,14 +53,15 @@ void ensure_backend() {
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_zeeshan_androidllmserver_llm_LlmBridge_nativeInit(
-        JNIEnv * env, jobject /*thiz*/, jstring jModelPath, jint nCtx, jint nThreads) {
+        JNIEnv * env, jobject /*thiz*/, jstring jModelPath, jint nCtx, jint nThreads, jboolean useGpu) {
 
     ensure_backend();
 
     const char * model_path = env->GetStringUTFChars(jModelPath, nullptr);
-    LOGI("loading model: %s", model_path);
+    LOGI("loading model: %s (gpu=%d)", model_path, (int) useGpu);
 
     llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = useGpu ? 99 : 0;
     llama_model * model = llama_model_load_from_file(model_path, mparams);
     env->ReleaseStringUTFChars(jModelPath, model_path);
 

@@ -122,7 +122,7 @@ class LlmService : Service() {
             try {
                 LlmBridge.ensureNativeLoaded()
                 val b = LlmBridge()
-                b.load(modelPath)
+                b.load(modelPath, nCtx = serverPrefs.nCtx, nThreads = serverPrefs.nThreads, useGpu = serverPrefs.useGpu)
                 bridge = b
                 // Persist the model path so the boot receiver can restart with the same model.
                 serverPrefs.lastModelPath = modelPath

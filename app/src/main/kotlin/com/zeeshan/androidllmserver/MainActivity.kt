@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Home
@@ -77,6 +78,7 @@ import com.zeeshan.androidllmserver.model.ModelDownloadManager
 import com.zeeshan.androidllmserver.model.ModelRepository
 import com.zeeshan.androidllmserver.prefs.ServerPreferences
 import com.zeeshan.androidllmserver.service.LlmService
+import com.zeeshan.androidllmserver.ui.ChatScreen
 import com.zeeshan.androidllmserver.ui.ModelsScreen
 import com.zeeshan.androidllmserver.ui.SettingsDialog
 import com.zeeshan.androidllmserver.ui.theme.LlmServerTheme
@@ -88,7 +90,7 @@ private const val TAG = "MainActivity"
 private const val SMOKE_PROMPT =
     "<|im_start|>user\nSay hello in one short sentence.<|im_end|>\n<|im_start|>assistant\n"
 
-private enum class Screen { SERVER, MODELS, SETTINGS }
+private enum class Screen { SERVER, MODELS, SETTINGS, CHAT }
 
 class MainActivity : ComponentActivity() {
 
@@ -186,6 +188,20 @@ class MainActivity : ComponentActivity() {
                                 selected = currentScreen == Screen.MODELS,
                                 onClick = {
                                     currentScreen = Screen.MODELS
+                                    scope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                            )
+                            NavigationDrawerItem(
+                                icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null) },
+                                label = { Text("Chat") },
+                                selected = currentScreen == Screen.CHAT,
+                                onClick = {
+                                    if (serviceBound && llmService?.isModelLoaded == true) {
+                                        currentScreen = Screen.CHAT
+                                    } else {
+                                        Toast.makeText(this@MainActivity, "Load a model first", Toast.LENGTH_SHORT).show()
+                                    }
                                     scope.launch { drawerState.close() }
                                 },
                                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -501,6 +517,49 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
 
+                                    // Chat card
+                                    OutlinedCard(
+                                        onClick = {
+                                            if (serviceBound && llmService?.isModelLoaded == true) {
+                                                currentScreen = Screen.CHAT
+                                            } else {
+                                                Toast.makeText(this@MainActivity, "Load a model first", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(16.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFFFCC934).copy(alpha = 0.2f)),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Icon(
+                                                    Icons.AutoMirrored.Filled.Chat,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFFFCC934),
+                                                )
+                                            }
+                                            Column {
+                                                Text(
+                                                    "Chat",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                )
+                                                Text(
+                                                    "Test conversations with loaded model",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+
                                     // Test output
                                     if (testOutput.isNotEmpty()) {
                                         Card(
@@ -534,6 +593,17 @@ class MainActivity : ComponentActivity() {
                                     selectedModelPath = path
                                     currentScreen = Screen.SERVER
                                 },
+                                onBack = { currentScreen = Screen.SERVER },
+                            )
+                        }
+
+                        Screen.CHAT -> {
+                            val modelLabel = selectedModelPath
+                                ?.substringAfterLast('/')
+                                ?: "Unknown model"
+                            ChatScreen(
+                                bridge = llmService?.bridge,
+                                modelName = modelLabel,
                                 onBack = { currentScreen = Screen.SERVER },
                             )
                         }

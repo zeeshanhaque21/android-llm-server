@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.zeeshan.androidllmserver.model.CatalogEntry
 import com.zeeshan.androidllmserver.model.DownloadProgress
+import com.zeeshan.androidllmserver.model.GgufFileInfo
 import com.zeeshan.androidllmserver.model.ModelDownloadManager
 import com.zeeshan.androidllmserver.model.ModelFile
 import com.zeeshan.androidllmserver.model.ModelRepository
@@ -72,6 +73,10 @@ fun ModelsScreen(
     var deleteConfirmModel by remember { mutableStateOf<ModelFile?>(null) }
     var customUrl by remember { mutableStateOf("") }
     var showCustomUrlDialog by remember { mutableStateOf(false) }
+    var isResolving by remember { mutableStateOf(false) }
+    var resolvedFiles by remember { mutableStateOf<List<GgufFileInfo>>(emptyList()) }
+    var showGgufPickerDialog by remember { mutableStateOf(false) }
+    var resolveError by remember { mutableStateOf<String?>(null) }
 
     // Cancel download if we leave the screen
     DisposableEffect(Unit) {
@@ -325,48 +330,173 @@ fun ModelsScreen(
         }
     }
 
-    // Custom URL dialog
+    // Custom URL / repo name dialog
     if (showCustomUrlDialog) {
+        val inputIsUrl = customUrl.trim().let {
+            it.contains("huggingface.co") || it.startsWith("http://") || it.startsWith("https://")
+        }
+
         AlertDialog(
-            onDismissRequest = { showCustomUrlDialog = false },
-            title = { Text("Download from URL") },
+            onDismissRequest = {
+                if (!isResolving) {
+                    showCustomUrlDialog = false
+                    resolveError = null
+                }
+            },
+            title = { Text("Download Model") },
             text = {
                 Column {
                     Text(
-                        "Paste a direct link to any .gguf file (e.g. from HuggingFace)",
+                        "Paste a URL or enter a model name (e.g. google/gemma-4-31B-it)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = customUrl,
-                        onValueChange = { customUrl = it },
-                        label = { Text("GGUF URL") },
+                        onValueChange = {
+                            customUrl = it
+                            resolveError = null
+                        },
+                        label = { Text("URL or model name") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
+                        enabled = !isResolving,
                     )
+                    if (isResolving) {
+                        Spacer(Modifier.height(8.dp))
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Searching for GGUF files...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    resolveError?.let { error ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val fileName = customUrl.substringAfterLast('/').let { name ->
-                            if (name.endsWith(".gguf", ignoreCase = true)) name
-                            else "$name.gguf"
+                        val input = customUrl.trim()
+                        if (inputIsUrl) {
+                            // Direct URL download
+                            val fileName = input.substringAfterLast('/').let { name ->
+                                if (name.endsWith(".gguf", ignoreCase = true)) name
+                                else "$name.gguf"
+                            }
+                            startDownload(input, fileName)
+                            customUrl = ""
+                            resolveError = null
+                            showCustomUrlDialog = false
+                        } else {
+                            // Resolve repo name
+                            isResolving = true
+                            resolveError = null
+                            scope.launch {
+                                val files = downloadManager.resolveGgufFiles(input)
+                                isResolving = false
+                                if (files.isEmpty()) {
+                                    resolveError = "No GGUF files found for \"$input\". Try bartowski/$input-GGUF or a direct URL."
+                                } else if (files.size == 1) {
+                                    val file = files.first()
+                                    startDownload(file.downloadUrl, file.fileName)
+                                    customUrl = ""
+                                    resolveError = null
+                                    showCustomUrlDialog = false
+                                } else {
+                                    resolvedFiles = files
+                                    showGgufPickerDialog = true
+                                    showCustomUrlDialog = false
+                                }
+                            }
                         }
-                        startDownload(customUrl.trim(), fileName)
-                        customUrl = ""
-                        showCustomUrlDialog = false
                     },
-                    enabled = customUrl.isNotBlank(),
+                    enabled = customUrl.isNotBlank() && !isResolving,
                 ) {
-                    Text("Download")
+                    Text(if (inputIsUrl) "Download" else "Find GGUF")
                 }
             },
             dismissButton = {
+                TextButton(
+                    onClick = {
+                        customUrl = ""
+                        resolveError = null
+                        showCustomUrlDialog = false
+                    },
+                    enabled = !isResolving,
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    // GGUF file picker dialog
+    if (showGgufPickerDialog && resolvedFiles.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = {
+                showGgufPickerDialog = false
+                resolvedFiles = emptyList()
+            },
+            title = { Text("Select Quantization") },
+            text = {
+                Column {
+                    Text(
+                        "From ${resolvedFiles.first().repoName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.height(300.dp),
+                    ) {
+                        items(resolvedFiles, key = { it.fileName }) { file ->
+                            OutlinedButton(
+                                onClick = {
+                                    startDownload(file.downloadUrl, file.fileName)
+                                    showGgufPickerDialog = false
+                                    resolvedFiles = emptyList()
+                                    customUrl = ""
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isDownloading,
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.Start,
+                                ) {
+                                    Text(
+                                        file.fileName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (file.sizeBytes > 0) {
+                                        Text(
+                                            formatBytes(file.sizeBytes),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
                 TextButton(onClick = {
-                    customUrl = ""
-                    showCustomUrlDialog = false
+                    showGgufPickerDialog = false
+                    resolvedFiles = emptyList()
                 }) {
                     Text("Cancel")
                 }

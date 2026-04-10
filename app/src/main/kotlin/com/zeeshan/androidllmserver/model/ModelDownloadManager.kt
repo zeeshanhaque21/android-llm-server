@@ -1,10 +1,13 @@
 package com.zeeshan.androidllmserver.model
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -121,15 +124,93 @@ class ModelDownloadManager(private val context: Context) {
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * Resolve a HuggingFace repo name to a list of available GGUF files.
+     *
+     * Tries `bartowski/{modelName}-GGUF` first (the common pattern for quantized
+     * models), then falls back to the original repo name.
+     *
+     * Returns a list of [GgufFileInfo] sorted with Q4_K_M first, then by file size ascending.
+     * Returns an empty list if no GGUF files are found.
+     */
+    suspend fun resolveGgufFiles(repoName: String): List<GgufFileInfo> = withContext(Dispatchers.IO) {
+        val modelName = repoName.substringAfterLast('/')
+        val repos = listOf(
+            "bartowski/$modelName-GGUF",
+            repoName,
+        )
+
+        for (repo in repos) {
+            val files = fetchGgufFilesFromRepo(repo)
+            if (files.isNotEmpty()) return@withContext files
+        }
+
+        emptyList()
+    }
+
+    private fun fetchGgufFilesFromRepo(repo: String): List<GgufFileInfo> {
+        val apiUrl = "https://huggingface.co/api/models/$repo/tree/main"
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 15_000
+                instanceFollowRedirects = true
+            }
+
+            if (connection.responseCode != 200) {
+                Log.d(TAG, "HF API returned ${connection.responseCode} for $repo")
+                return emptyList()
+            }
+
+            val body = connection.inputStream.bufferedReader().readText()
+            val jsonArray = JSONArray(body)
+            val ggufFiles = mutableListOf<GgufFileInfo>()
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val path = obj.getString("path")
+                if (path.endsWith(".gguf", ignoreCase = true)) {
+                    val size = obj.optLong("size", -1L)
+                    val downloadUrl = "https://huggingface.co/$repo/resolve/main/$path"
+                    ggufFiles.add(GgufFileInfo(
+                        fileName = path,
+                        sizeBytes = size,
+                        downloadUrl = downloadUrl,
+                        repoName = repo,
+                    ))
+                }
+            }
+
+            // Sort: prefer Q4_K_M, then by size ascending
+            return ggufFiles.sortedWith(compareByDescending<GgufFileInfo> {
+                it.fileName.contains("Q4_K_M", ignoreCase = true)
+            }.thenBy { it.sizeBytes })
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to fetch GGUF list from $repo", e)
+            return emptyList()
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
     /** Cancel an in-progress download. */
     fun cancel() {
         cancelled.set(true)
     }
 
     private companion object {
+        const val TAG = "ModelDownloadManager"
         const val BUFFER_SIZE = 8192
     }
 }
+
+data class GgufFileInfo(
+    val fileName: String,
+    val sizeBytes: Long,
+    val downloadUrl: String,
+    val repoName: String,
+)
 
 /** Helper to format bytes as a human-readable string. */
 fun formatBytes(bytes: Long): String = when {

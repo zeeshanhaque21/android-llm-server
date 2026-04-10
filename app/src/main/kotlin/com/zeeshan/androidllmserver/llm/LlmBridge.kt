@@ -30,10 +30,10 @@ class LlmBridge {
         fun onToken(token: String)
     }
 
-    suspend fun load(modelPath: String, nCtx: Int = 2048, nThreads: Int = 4) {
+    suspend fun load(modelPath: String, nCtx: Int = 2048, nThreads: Int = 4, useGpu: Boolean = false) {
         withContext(inferenceDispatcher) {
             check(handle.get() == 0L) { "model already loaded" }
-            val h = nativeInit(modelPath, nCtx, nThreads)
+            val h = nativeInit(modelPath, nCtx, nThreads, useGpu)
             check(h != 0L) { "nativeInit failed for $modelPath" }
             handle.set(h)
         }
@@ -68,7 +68,7 @@ class LlmBridge {
 
     // --- JNI surface (keep names in sync with llm_bridge.cpp) ---------------
 
-    private external fun nativeInit(modelPath: String, nCtx: Int, nThreads: Int): Long
+    private external fun nativeInit(modelPath: String, nCtx: Int, nThreads: Int, useGpu: Boolean): Long
     private external fun nativeGenerate(handle: Long, prompt: String, nPredict: Int, cb: TokenCallback): Int
     private external fun nativeCancel(handle: Long)
     private external fun nativeFree(handle: Long)
