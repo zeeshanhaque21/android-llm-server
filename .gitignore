@@ -35,3 +35,5 @@ app/src/main/assets/models/
 keystore.properties
 *.jks
 *.keystore
+# Vendored Vulkan headers (download with setup script)
+app/src/main/cpp/third_party/

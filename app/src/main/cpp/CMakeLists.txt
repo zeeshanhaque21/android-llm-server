@@ -17,6 +17,19 @@ set(LLAMA_BUILD_COMMON   ON  CACHE BOOL "" FORCE)
 set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP          OFF CACHE BOOL "" FORCE)
 
+# Vulkan GPU backend — Adreno 640 (Note 10+) supports Vulkan 1.1.
+# The NDK ships Vulkan C headers in the sysroot but the C++ wrapper
+# (vulkan.hpp) lives under sources/third_party/vulkan. We point
+# Vulkan_INCLUDE_DIR there so find_package(Vulkan) picks up both.
+set(GGML_VULKAN          ON  CACHE BOOL "" FORCE)
+set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "" FORCE)
+
+# Help find_package(Vulkan) locate the C++ headers + glslc.
+# NDK 27 ships C headers in the sysroot but lacks vulkan.hpp. We vendor
+# the Khronos Vulkan-Headers under third_party/ for the C++ wrappers.
+set(Vulkan_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/Vulkan-Headers/include" CACHE PATH "" FORCE)
+set(Vulkan_GLSLC_EXECUTABLE "${ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}/glslc" CACHE FILEPATH "" FORCE)
+
 # ARM-specific tuning. KleidiAI gives a meaningful boost on arm64-v8a (the only
 # ABI we ship for v1). x86_64 is built only for emulator convenience.
 if(ANDROID_ABI STREQUAL "arm64-v8a")
@@ -40,4 +53,5 @@ target_link_libraries(llmbridge
     common
     android
     log
+    vulkan
 )
