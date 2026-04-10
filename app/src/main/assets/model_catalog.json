@@ -115,18 +115,18 @@
   },
   {
     "name": "AbsoluteReality V1.8.1",
-    "fileName": "absolutereality_v181.safetensors",
-    "url": "https://huggingface.co/Lykon/AbsoluteReality/resolve/main/AbsoluteReality_v1.8.1_pruned.safetensors",
-    "sizeBytes": 2132626782,
+    "fileName": "AbsoluteReality_1.8.1_pruned.safetensors",
+    "url": "https://huggingface.co/Lykon/AbsoluteReality/resolve/main/AbsoluteReality_1.8.1_pruned.safetensors",
+    "sizeBytes": 2132625432,
     "description": "Photorealistic focus. Best for portraits and real-world scenes. 512x512.",
     "type": "image",
     "plus": true
   },
   {
-    "name": "Anything V5",
-    "fileName": "anything-v5-PrtRE.safetensors",
-    "url": "https://huggingface.co/stablediffusionapi/anything-v5/resolve/main/anything-v5-PrtRE.safetensors",
-    "sizeBytes": 2132626782,
+    "name": "Anything V4",
+    "fileName": "anything-v4.0-pruned-fp16.safetensors",
+    "url": "https://huggingface.co/xyn-ai/anything-v4.0/resolve/main/anything-v4.0-pruned-fp16.safetensors",
+    "sizeBytes": 2132626071,
     "description": "Anime and illustration style. High quality character art. 512x512.",
     "type": "image",
     "plus": true
