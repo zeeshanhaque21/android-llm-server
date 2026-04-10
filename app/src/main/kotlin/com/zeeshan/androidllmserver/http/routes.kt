@@ -152,6 +152,65 @@ private suspend fun handleStreaming(
     }
 }
 
+// ── Ollama-compatible routes ─────────────────────────────────────────────────
+
+fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
+
+    get("/api/tags") {
+        val now = System.currentTimeMillis() / 1000
+        call.respond(OllamaTagsResponse(
+            models = listOf(OllamaModelEntry(
+                name = modelName,
+                model = modelName,
+                modifiedAt = java.time.Instant.ofEpochSecond(now).toString(),
+            ))
+        ))
+    }
+
+    post("/api/chat") {
+        val body = call.receiveText()
+        val req = Json.decodeFromString<OllamaChatRequest>(body)
+        val prompt = formatChatPrompt(req.messages.map { ChatMessage(it.role, it.content) })
+        val model = req.model.ifBlank { modelName }
+        val stream = req.stream
+
+        if (stream) {
+            call.response.header(HttpHeaders.CacheControl, "no-cache")
+            call.respondTextWriter(contentType = ContentType.Application.Json) {
+                try {
+                    bridge.generate(prompt, 256).collect { token ->
+                        val chunk = OllamaChatResponse(
+                            model = model,
+                            message = OllamaChatMessage(role = "assistant", content = token),
+                            done = false,
+                        )
+                        write(json.encodeToString(chunk) + "\n")
+                        flush()
+                    }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    return@respondTextWriter
+                }
+                // Final done message
+                val done = OllamaChatResponse(
+                    model = model,
+                    message = OllamaChatMessage(role = "assistant", content = ""),
+                    done = true,
+                )
+                write(json.encodeToString(done) + "\n")
+                flush()
+            }
+        } else {
+            val tokens = bridge.generate(prompt, 256).toList()
+            val fullText = tokens.joinToString("")
+            call.respond(OllamaChatResponse(
+                model = model,
+                message = OllamaChatMessage(role = "assistant", content = fullText),
+                done = true,
+            ))
+        }
+    }
+}
+
 // ── Prompt formatting ───────────────────────────────────────────────────────
 
 /**

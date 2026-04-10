@@ -78,6 +78,44 @@ data class ModelsResponse(
     val data: List<ModelInfo>,
 )
 
+// ── Ollama-compatible DTOs ───────────────────────────────────────────────────
+
+@Serializable
+data class OllamaChatRequest(
+    val model: String = "",
+    val messages: List<OllamaChatMessage>,
+    val stream: Boolean = true,
+)
+
+@Serializable
+data class OllamaChatMessage(
+    val role: String,
+    val content: String,
+)
+
+@Serializable
+data class OllamaTagsResponse(
+    val models: List<OllamaModelEntry>,
+)
+
+@Serializable
+data class OllamaModelEntry(
+    val name: String,
+    val model: String,
+    @SerialName("modified_at") val modifiedAt: String = "",
+    val size: Long = 0,
+    val digest: String = "",
+)
+
+@Serializable
+data class OllamaChatResponse(
+    val model: String,
+    val message: OllamaChatMessage,
+    val done: Boolean,
+)
+
+// ── Models endpoint ─────────────────────────────────────────────────────────
+
 @Serializable
 data class ModelInfo(
     val id: String,

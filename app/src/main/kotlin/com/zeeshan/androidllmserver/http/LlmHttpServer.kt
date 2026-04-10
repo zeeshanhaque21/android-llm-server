@@ -124,6 +124,7 @@ class LlmHttpServer(
     private fun Application.configureRouting() {
         routing {
             installOpenAiRoutes(bridge, modelName)
+            installOllamaRoutes(bridge, modelName)
         }
     }
 }
