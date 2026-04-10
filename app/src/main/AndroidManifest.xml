@@ -13,6 +13,9 @@
     <!-- Phase 7: auto-start server after device boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Phase 8: read WiFi IP to display server URL -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"

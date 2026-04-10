@@ -28,14 +28,37 @@ class ServerPreferences(context: Context) {
         get() = prefs.getInt(KEY_HTTP_PORT, DEFAULT_HTTP_PORT)
         set(value) { prefs.edit().putInt(KEY_HTTP_PORT, value).apply() }
 
+    var nCtx: Int
+        get() = prefs.getInt(KEY_N_CTX, DEFAULT_N_CTX)
+        set(value) { prefs.edit().putInt(KEY_N_CTX, value).apply() }
+
+    var nThreads: Int
+        get() = prefs.getInt(KEY_N_THREADS, DEFAULT_N_THREADS)
+        set(value) { prefs.edit().putInt(KEY_N_THREADS, value).apply() }
+
+    var temperature: Float
+        get() = prefs.getFloat(KEY_TEMPERATURE, DEFAULT_TEMPERATURE)
+        set(value) { prefs.edit().putFloat(KEY_TEMPERATURE, value).apply() }
+
+    var samsungWarningDismissed: Boolean
+        get() = prefs.getBoolean(KEY_SAMSUNG_WARNING_DISMISSED, false)
+        set(value) { prefs.edit().putBoolean(KEY_SAMSUNG_WARNING_DISMISSED, value).apply() }
+
     companion object {
         const val PREFS_NAME = "llm_server_prefs"
         const val DEFAULT_HTTP_PORT = 8085
+        const val DEFAULT_N_CTX = 2048
+        const val DEFAULT_N_THREADS = 4
+        const val DEFAULT_TEMPERATURE = 0.7f
 
         private const val KEY_AUTO_START = "autostart"
         private const val KEY_LAST_MODEL_PATH = "last_model_path"
         private const val KEY_AUTH_ENABLED = "auth_enabled"
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_HTTP_PORT = "http_port"
+        private const val KEY_N_CTX = "n_ctx"
+        private const val KEY_N_THREADS = "n_threads"
+        private const val KEY_TEMPERATURE = "temperature"
+        private const val KEY_SAMSUNG_WARNING_DISMISSED = "samsung_warning_dismissed"
     }
 }
