@@ -33,15 +33,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.zeeshan.androidllmserver.model.CatalogEntry
+import com.zeeshan.androidllmserver.model.ModelCatalog
+import com.zeeshan.androidllmserver.model.ModelDownloadManager
+import com.zeeshan.androidllmserver.model.ModelRepository
 import com.zeeshan.androidllmserver.service.LlmService
+import com.zeeshan.androidllmserver.ui.ModelsScreen
 import kotlinx.coroutines.launch
 import java.io.File
 
 private const val TAG = "MainActivity"
 
-private const val SMOKE_MODEL_NAME = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
 private const val SMOKE_PROMPT =
     "<|im_start|>user\nSay hello in one short sentence.<|im_end|>\n<|im_start|>assistant\n"
+
+private enum class Screen { SERVER, MODELS }
 
 class MainActivity : ComponentActivity() {
 
@@ -49,6 +55,14 @@ class MainActivity : ComponentActivity() {
     private var serviceBound by mutableStateOf(false)
     private var serviceStatus by mutableStateOf("stopped")
     private var testOutput by mutableStateOf("")
+    private var currentScreen by mutableStateOf(Screen.SERVER)
+    private var selectedModelPath by mutableStateOf<String?>(null)
+    private var activeModelPath by mutableStateOf<String?>(null)
+
+    private lateinit var modelRepository: ModelRepository
+    private lateinit var modelCatalog: ModelCatalog
+    private lateinit var downloadManager: ModelDownloadManager
+    private var catalogEntries by mutableStateOf<List<CatalogEntry>>(emptyList())
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -82,91 +96,124 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        modelRepository = ModelRepository(this)
+        modelCatalog = ModelCatalog(this)
+        downloadManager = ModelDownloadManager(this)
+        catalogEntries = modelCatalog.loadCatalog()
+
+        // Default to first installed model if none selected
+        val installed = modelRepository.listModels()
+        if (selectedModelPath == null && installed.isNotEmpty()) {
+            selectedModelPath = installed.first().path
+        }
+
         setContent {
             MaterialTheme {
-                Scaffold { padding ->
-                    val scope = rememberCoroutineScope()
-                    val modelFile = File(getExternalFilesDir(null), SMOKE_MODEL_NAME)
+                when (currentScreen) {
+                    Screen.SERVER -> {
+                        Scaffold { padding ->
+                            val scope = rememberCoroutineScope()
+                            val selectedName = selectedModelPath
+                                ?.substringAfterLast('/')
+                                ?: "No model selected"
 
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(padding)
-                            .padding(16.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        horizontalAlignment = Alignment.Start
-                    ) {
-                        Text("android-llm-server", style = MaterialTheme.typography.titleLarge)
-                        Text("Phase 2 — service control", style = MaterialTheme.typography.bodySmall)
-
-                        Text(
-                            "Model: ${modelFile.name}",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        Text(
-                            "Path: ${modelFile.absolutePath}",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            "Model exists: ${modelFile.exists()}",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Text(
-                            "Status: $serviceStatus",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Button(
-                                onClick = { requestStartService() },
-                                enabled = serviceStatus == "stopped" || serviceStatus == "disconnected"
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(padding)
+                                    .padding(16.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalAlignment = Alignment.Start,
                             ) {
-                                Text("Start Server")
-                            }
+                                Text("android-llm-server", style = MaterialTheme.typography.titleLarge)
+                                Text("LLM inference server", style = MaterialTheme.typography.bodySmall)
 
-                            OutlinedButton(
-                                onClick = { stopLlmService() },
-                                enabled = serviceBound
-                            ) {
-                                Text("Stop Server")
-                            }
-                        }
+                                Text(
+                                    "Model: $selectedName",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    "Status: $serviceStatus",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
 
-                        // Test generate button — keeps smoke test capability
-                        Button(
-                            onClick = {
-                                val svc = llmService ?: return@Button
-                                val bridge = svc.bridge ?: return@Button
-                                testOutput = ""
-                                scope.launch {
-                                    runCatching {
-                                        svc.setGenerating(true)
-                                        bridge.generate(SMOKE_PROMPT, maxTokens = 128).collect { tok ->
-                                            testOutput += tok
-                                        }
-                                        svc.setGenerating(false)
-                                    }.onFailure { e ->
-                                        Log.e(TAG, "Test generate failed", e)
-                                        testOutput = "Error: ${e.message}"
-                                        svc.setGenerating(false)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Button(
+                                        onClick = { requestStartService() },
+                                        enabled = (serviceStatus == "stopped" || serviceStatus == "disconnected")
+                                            && selectedModelPath != null,
+                                    ) {
+                                        Text("Start Server")
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = { stopLlmService() },
+                                        enabled = serviceBound,
+                                    ) {
+                                        Text("Stop Server")
                                     }
                                 }
-                            },
-                            enabled = serviceBound && llmService?.isModelLoaded == true
-                        ) {
-                            Text("Test Generate")
-                        }
 
-                        if (testOutput.isNotEmpty()) {
-                            Text(
-                                testOutput,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(top = 8.dp)
-                            )
+                                // Models button
+                                OutlinedButton(onClick = { currentScreen = Screen.MODELS }) {
+                                    Text("Models")
+                                }
+
+                                // Test generate button — keeps smoke test capability
+                                Button(
+                                    onClick = {
+                                        val svc = llmService ?: return@Button
+                                        val bridge = svc.bridge ?: return@Button
+                                        testOutput = ""
+                                        scope.launch {
+                                            runCatching {
+                                                svc.setGenerating(true)
+                                                bridge.generate(SMOKE_PROMPT, maxTokens = 128).collect { tok ->
+                                                    testOutput += tok
+                                                }
+                                                svc.setGenerating(false)
+                                            }.onFailure { e ->
+                                                Log.e(TAG, "Test generate failed", e)
+                                                testOutput = "Error: ${e.message}"
+                                                svc.setGenerating(false)
+                                            }
+                                        }
+                                    },
+                                    enabled = serviceBound && llmService?.isModelLoaded == true,
+                                ) {
+                                    Text("Test Generate")
+                                }
+
+                                if (testOutput.isNotEmpty()) {
+                                    Text(
+                                        testOutput,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.padding(top = 8.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Screen.MODELS -> {
+                        Scaffold { padding ->
+                            Column(modifier = Modifier.padding(padding)) {
+                                ModelsScreen(
+                                    modelRepository = modelRepository,
+                                    catalog = catalogEntries,
+                                    downloadManager = downloadManager,
+                                    activeModelPath = activeModelPath,
+                                    onLoadModel = { path ->
+                                        selectedModelPath = path
+                                        currentScreen = Screen.SERVER
+                                    },
+                                    onBack = { currentScreen = Screen.SERVER },
+                                )
+                            }
                         }
                     }
                 }
@@ -201,13 +248,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startLlmService() {
-        val modelFile = File(getExternalFilesDir(null), SMOKE_MODEL_NAME)
+        val modelPath = selectedModelPath
+        if (modelPath == null) {
+            serviceStatus = "error: no model selected"
+            return
+        }
+
+        val modelFile = File(modelPath)
         if (!modelFile.exists()) {
-            serviceStatus = "error: model not found at ${modelFile.absolutePath}"
+            serviceStatus = "error: model not found at $modelPath"
             return
         }
 
         serviceStatus = "loading model..."
+        activeModelPath = modelPath
         val intent = Intent(this, LlmService::class.java).apply {
             action = LlmService.ACTION_START
             putExtra(LlmService.EXTRA_MODEL_PATH, modelFile.absolutePath)
@@ -224,6 +278,7 @@ class MainActivity : ComponentActivity() {
         }
         startService(intent)
         serviceStatus = "stopped"
+        activeModelPath = null
         testOutput = ""
     }
 }

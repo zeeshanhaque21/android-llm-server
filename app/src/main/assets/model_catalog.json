@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Qwen2.5 1.5B Instruct Q4_K_M",
+    "fileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "url": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    "sizeBytes": 986048768,
+    "description": "Best balance of quality and speed for phones with 6-8GB RAM"
+  },
+  {
+    "name": "Llama 3.2 1B Instruct Q4_K_M",
+    "fileName": "llama-3.2-1b-instruct-q4_k_m.gguf",
+    "url": "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+    "sizeBytes": 776105984,
+    "description": "Meta's smallest instruct model, fast on older devices"
+  },
+  {
+    "name": "Gemma 2 2B Instruct Q4_K_M",
+    "fileName": "gemma-2-2b-it-q4_k_m.gguf",
+    "url": "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
+    "sizeBytes": 1629102080,
+    "description": "Google's compact model, good reasoning for its size"
+  },
+  {
+    "name": "SmolLM2 1.7B Instruct Q4_K_M",
+    "fileName": "smollm2-1.7b-instruct-q4_k_m.gguf",
+    "url": "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+    "sizeBytes": 1018638336,
+    "description": "HuggingFace's small instruct model, efficient on mobile"
+  }
+]

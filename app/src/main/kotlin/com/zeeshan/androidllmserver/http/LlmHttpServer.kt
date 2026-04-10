@@ -1,35 +1,35 @@
 package com.zeeshan.androidllmserver.http
 
 import android.util.Log
+import com.zeeshan.androidllmserver.auth.AuthManager
 import com.zeeshan.androidllmserver.llm.LlmBridge
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
-import io.ktor.server.application.*
-import io.ktor.server.engine.*
-import io.ktor.server.netty.*
-import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.plugins.cors.routing.*
-import io.ktor.server.plugins.statuspages.*
-import io.ktor.server.response.*
-import io.ktor.server.routing.*
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.Application
+import io.ktor.server.application.createApplicationPlugin
+import io.ktor.server.application.install
+import io.ktor.server.engine.EmbeddedServer
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
+import io.ktor.server.netty.NettyApplicationEngine
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.cors.routing.CORS
+import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.header
+import io.ktor.server.request.path
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.routing
 import kotlinx.serialization.json.Json
 
 private const val TAG = "LlmHttpServer"
 
-/**
- * Manages the Ktor embedded HTTP server that exposes OpenAI-compatible routes.
- *
- * Lifecycle:
- * - [start] spawns the Netty server on a background thread, binding to `0.0.0.0:<port>`.
- * - [stop] gracefully shuts it down with a 2-second grace period.
- *
- * This class does NOT own the [LlmBridge]. The caller (typically the foreground
- * service) is responsible for loading/freeing the model.
- */
 class LlmHttpServer(
     private val bridge: LlmBridge,
     private val modelName: String,
-    private val port: Int = 8080,
+    private val port: Int = 8085,
+    private val authManager: AuthManager? = null,
 ) {
     private var server: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null
 
@@ -44,6 +44,7 @@ class LlmHttpServer(
             configureSerialization()
             configureCors()
             configureStatusPages()
+            configureAuth()
             configureRouting()
         }.also { it.start(wait = false) }
         Log.i(TAG, "HTTP server started on port $port")
@@ -57,8 +58,6 @@ class LlmHttpServer(
             Log.i(TAG, "HTTP server stopped")
         }
     }
-
-    // ── Ktor configuration ──────────────────────────────────────────────────
 
     private fun Application.configureSerialization() {
         install(ContentNegotiation) {
@@ -96,6 +95,30 @@ class LlmHttpServer(
                 )
             }
         }
+    }
+
+    private fun Application.configureAuth() {
+        val manager = authManager ?: return
+
+        val bearerAuthPlugin = createApplicationPlugin("BearerAuth") {
+            onCall { call ->
+                val path = call.request.path()
+                if (!path.startsWith("/v1")) return@onCall
+                if (!manager.authEnabled) return@onCall
+
+                val header = call.request.header(HttpHeaders.Authorization)
+                val token = header?.removePrefix("Bearer ")?.trim()
+
+                if (token.isNullOrBlank() || !manager.validateToken(token)) {
+                    call.respondText(
+                        text = """{"error":{"message":"Invalid or missing bearer token","type":"authentication_error"}}""",
+                        contentType = ContentType.Application.Json,
+                        status = HttpStatusCode.Unauthorized,
+                    )
+                }
+            }
+        }
+        install(bearerAuthPlugin)
     }
 
     private fun Application.configureRouting() {

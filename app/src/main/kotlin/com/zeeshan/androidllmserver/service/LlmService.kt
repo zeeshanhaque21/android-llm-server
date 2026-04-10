@@ -12,8 +12,10 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import com.zeeshan.androidllmserver.MainActivity
+import com.zeeshan.androidllmserver.auth.AuthManager
 import com.zeeshan.androidllmserver.http.LlmHttpServer
 import com.zeeshan.androidllmserver.llm.LlmBridge
+import com.zeeshan.androidllmserver.prefs.ServerPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -72,11 +74,17 @@ class LlmService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var loadJob: Job? = null
     private var httpServer: LlmHttpServer? = null
+    private lateinit var authManager: AuthManager
+    private lateinit var serverPrefs: ServerPreferences
 
     // --- Lifecycle ---
 
     override fun onCreate() {
         super.onCreate()
+        authManager = AuthManager(this)
+        serverPrefs = ServerPreferences(this)
+        // Ensure a token exists so the UI can display it immediately.
+        authManager.getOrCreateToken()
         createNotificationChannel()
     }
 
@@ -116,6 +124,8 @@ class LlmService : Service() {
                 val b = LlmBridge()
                 b.load(modelPath)
                 bridge = b
+                // Persist the model path so the boot receiver can restart with the same model.
+                serverPrefs.lastModelPath = modelPath
                 Log.i(TAG, "Model loaded: $modelPath")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load model", e)
@@ -126,7 +136,12 @@ class LlmService : Service() {
             // Start HTTP server now that the model is loaded.
             try {
                 val modelFileName = modelPath.substringAfterLast('/')
-                httpServer = LlmHttpServer(bridge!!, modelFileName, port = HTTP_PORT).also { it.start() }
+                httpServer = LlmHttpServer(
+                    bridge = bridge!!,
+                    modelName = modelFileName,
+                    port = HTTP_PORT,
+                    authManager = authManager,
+                ).also { it.start() }
                 updateNotification("LLM Server — idle (port $HTTP_PORT)")
                 Log.i(TAG, "HTTP server started on port $HTTP_PORT")
             } catch (e: Exception) {
