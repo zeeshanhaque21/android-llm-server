@@ -55,3 +55,35 @@ target_link_libraries(llmbridge
     log
     vulkan
 )
+
+# --- stable-diffusion.cpp (image generation) ---
+set(SD_DIR ${CMAKE_CURRENT_LIST_DIR}/stable-diffusion.cpp)
+if(EXISTS ${SD_DIR}/CMakeLists.txt)
+    message(STATUS "Building stable-diffusion.cpp")
+
+    # SD build options
+    set(SD_BUILD_EXAMPLES  OFF CACHE BOOL "" FORCE)
+    set(SD_BUILD_SERVER    OFF CACHE BOOL "" FORCE)
+    set(SD_VULKAN          ON  CACHE BOOL "" FORCE)
+    set(SD_FLASH_ATTN      ON  CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS  OFF CACHE BOOL "" FORCE)
+
+    add_subdirectory(${SD_DIR} build-sd)
+
+    add_library(sdbridge SHARED sd_bridge.cpp)
+
+    target_include_directories(sdbridge PRIVATE
+        ${SD_DIR}
+        ${SD_DIR}/include
+        ${SD_DIR}/thirdparty
+        ${SD_DIR}/ggml/include
+    )
+
+    target_link_libraries(sdbridge
+        stable-diffusion
+        android
+        log
+    )
+else()
+    message(STATUS "stable-diffusion.cpp not found — skipping image generation")
+endif()

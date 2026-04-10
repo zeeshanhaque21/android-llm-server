@@ -169,8 +169,8 @@ fun ChatScreen(
 
     val primaryColor = MaterialTheme.colorScheme.primary
 
-    // Auto-scroll to bottom when messages change
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content, messages.lastOrNull()?.thinkingContent) {
+    // Auto-scroll only when a new message is added (not on every token)
+    LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
