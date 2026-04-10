@@ -1,5 +1,19 @@
 [
   {
+    "name": "Home 3B v3 (Home Assistant)",
+    "fileName": "home-3b-v3-q4_k_m.gguf",
+    "url": "https://huggingface.co/acon96/Home-3B-v3-GGUF/resolve/main/Home-3B-v3.q4_k_m.gguf",
+    "sizeBytes": 1793064960,
+    "description": "Fine-tuned for Home Assistant smart home control. Can turn on lights, set thermostats, and answer questions about your home. Recommended for HA users."
+  },
+  {
+    "name": "Home 1B v3 (Home Assistant)",
+    "fileName": "home-1b-v3-q4_k_m.gguf",
+    "url": "https://huggingface.co/acon96/Home-1B-v3-GGUF/resolve/main/Home-1B-v3.q4_k_m.gguf",
+    "sizeBytes": 668860416,
+    "description": "Smallest Home Assistant model. Runs on very low-RAM devices (Raspberry Pi, old phones). Less capable than 3B but still controls devices."
+  },
+  {
     "name": "Qwen2.5 1.5B Instruct",
     "fileName": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
     "url": "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
