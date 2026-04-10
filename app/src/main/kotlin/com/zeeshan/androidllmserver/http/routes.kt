@@ -222,7 +222,13 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
 internal fun formatChatPrompt(messages: List<ChatMessage>): String {
     val sb = StringBuilder()
     for (msg in messages) {
-        sb.append("<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n")
+        val content = buildString {
+            if (msg.imageUrl != null) {
+                append("[Image provided]\n")
+            }
+            append(msg.content)
+        }
+        sb.append("<|im_start|>${msg.role}\n$content<|im_end|>\n")
     }
     sb.append("<|im_start|>assistant\n")
     return sb.toString()

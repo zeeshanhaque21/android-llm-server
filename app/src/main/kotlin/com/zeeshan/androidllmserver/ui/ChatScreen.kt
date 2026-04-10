@@ -1,6 +1,11 @@
 package com.zeeshan.androidllmserver.ui
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +38,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +71,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
@@ -72,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import com.zeeshan.androidllmserver.llm.LlmBridge
 import com.zeeshan.androidllmserver.prefs.ServerPreferences
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
 
 data class ChatMsg(
@@ -79,6 +89,7 @@ data class ChatMsg(
     val content: String,
     val isStreaming: Boolean = false,
     val thinkingContent: String = "",
+    val imageBase64: String? = null,
 )
 
 private fun formatChatPrompt(messages: List<ChatMsg>): String {
@@ -105,6 +116,48 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var showConfigDialog by remember { mutableStateOf(false) }
+
+    // Image attachment state
+    var attachedImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var attachedImageBase64 by remember { mutableStateOf<String?>(null) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            attachedImageUri = uri
+            // Convert to base64
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                inputStream?.close()
+                if (bytes != null) {
+                    // Resize if too large (max 1MB for reasonable prompt size)
+                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    if (bitmap != null) {
+                        val maxDim = 1024
+                        val scaledBitmap = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                            val scale = maxDim.toFloat() / maxOf(bitmap.width, bitmap.height)
+                            android.graphics.Bitmap.createScaledBitmap(
+                                bitmap,
+                                (bitmap.width * scale).toInt(),
+                                (bitmap.height * scale).toInt(),
+                                true,
+                            )
+                        } else {
+                            bitmap
+                        }
+                        val baos = ByteArrayOutputStream()
+                        scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)
+                        attachedImageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                    }
+                }
+            } catch (_: Exception) {
+                attachedImageUri = null
+                attachedImageBase64 = null
+            }
+        }
+    }
 
     // Local config state
     var configMaxTokens by remember { mutableIntStateOf(2000) }
@@ -270,6 +323,42 @@ fun ChatScreen(
                 )
             }
 
+            // Image preview (above input card)
+            if (attachedImageBase64 != null) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val previewBytes = Base64.decode(attachedImageBase64, Base64.DEFAULT)
+                    val previewBitmap = BitmapFactory.decodeByteArray(previewBytes, 0, previewBytes.size)
+                    if (previewBitmap != null) {
+                        Image(
+                            bitmap = previewBitmap.asImageBitmap(),
+                            contentDescription = "Attached image preview",
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            attachedImageUri = null
+                            attachedImageBase64 = null
+                        },
+                        modifier = Modifier.size(24.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Remove image",
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+
             // Input area
             OutlinedCard(
                 modifier = Modifier
@@ -314,18 +403,18 @@ fun ChatScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // "+" button (placeholder)
+                        // "+" button — pick image from gallery
                         Surface(
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.surfaceVariant,
                         ) {
                             IconButton(
-                                onClick = { /* placeholder */ },
+                                onClick = { imagePickerLauncher.launch("image/*") },
                                 modifier = Modifier.size(40.dp),
                             ) {
                                 Icon(
                                     Icons.Default.Add,
-                                    contentDescription = "Add attachment",
+                                    contentDescription = "Add image",
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
@@ -334,7 +423,7 @@ fun ChatScreen(
                         Spacer(Modifier.weight(1f))
 
                         // Send button
-                        val canSend = !isGenerating && inputText.isNotBlank() && bridge != null
+                        val canSend = !isGenerating && (inputText.isNotBlank() || attachedImageBase64 != null) && bridge != null
                         Surface(
                             shape = CircleShape,
                             color = if (canSend) {
@@ -346,11 +435,21 @@ fun ChatScreen(
                             IconButton(
                                 onClick = {
                                     val text = inputText.trim()
-                                    if (text.isEmpty() || bridge == null) return@IconButton
+                                    val imageB64 = attachedImageBase64
+                                    if (text.isEmpty() && imageB64 == null || bridge == null) return@IconButton
 
-                                    // Add user message
-                                    messages.add(ChatMsg(role = "user", content = text))
+                                    // Build the user message content — prepend marker if image attached
+                                    val userContent = if (imageB64 != null) {
+                                        "[Image attached]\n$text"
+                                    } else {
+                                        text
+                                    }
+
+                                    // Add user message (with image if present)
+                                    messages.add(ChatMsg(role = "user", content = userContent, imageBase64 = imageB64))
                                     inputText = ""
+                                    attachedImageUri = null
+                                    attachedImageBase64 = null
                                     isGenerating = true
 
                                     // Build prompt from all messages, prepending a system message
@@ -545,6 +644,45 @@ private fun MessageBubble(msg: ChatMsg) {
                 .padding(12.dp),
         ) {
             Column {
+                // Display attached image (user messages)
+                if (msg.imageBase64 != null) {
+                    val imgBytes = Base64.decode(msg.imageBase64, Base64.DEFAULT)
+                    val imgBitmap = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.size)
+                    if (imgBitmap != null) {
+                        Image(
+                            bitmap = imgBitmap.asImageBitmap(),
+                            contentDescription = "Attached image",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Fit,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+
+                // Display image from assistant (data URI in content)
+                if (!isUser && !isSystem && msg.content.startsWith("data:image/")) {
+                    val commaIdx = msg.content.indexOf(',')
+                    if (commaIdx > 0) {
+                        val b64Data = msg.content.substring(commaIdx + 1)
+                        val genBytes = Base64.decode(b64Data, Base64.DEFAULT)
+                        val genBitmap = BitmapFactory.decodeByteArray(genBytes, 0, genBytes.size)
+                        if (genBitmap != null) {
+                            Image(
+                                bitmap = genBitmap.asImageBitmap(),
+                                contentDescription = "Generated image",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 300.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Fit,
+                            )
+                        }
+                    }
+                }
+
                 // Collapsible thinking section for assistant messages
                 if (!isUser && !isSystem && msg.thinkingContent.isNotEmpty()) {
                     var expanded by remember { mutableStateOf(msg.isStreaming) }
@@ -582,8 +720,11 @@ private fun MessageBubble(msg: ChatMsg) {
                     }
                 }
 
-                // Main content
-                val displayText = if (msg.isStreaming && msg.content.isEmpty() && msg.thinkingContent.isEmpty()) {
+                // Main content (skip if content is a data:image URI — already rendered above)
+                val isImageContent = !isUser && !isSystem && msg.content.startsWith("data:image/")
+                val displayText = if (isImageContent) {
+                    ""
+                } else if (msg.isStreaming && msg.content.isEmpty() && msg.thinkingContent.isEmpty()) {
                     "..."
                 } else if (msg.isStreaming && msg.content.isNotEmpty()) {
                     msg.content + "\u2588" // block cursor

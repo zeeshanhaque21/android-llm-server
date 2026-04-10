@@ -17,7 +17,8 @@ data class ChatCompletionRequest(
 @Serializable
 data class ChatMessage(
     val role: String,
-    val content: String,
+    val content: String = "",
+    @SerialName("image_url") val imageUrl: String? = null,
 )
 
 // ── Non-streaming response ──────────────────────────────────────────────────

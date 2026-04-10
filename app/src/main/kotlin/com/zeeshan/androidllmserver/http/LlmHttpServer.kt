@@ -3,6 +3,7 @@ package com.zeeshan.androidllmserver.http
 import android.util.Log
 import com.zeeshan.androidllmserver.auth.AuthManager
 import com.zeeshan.androidllmserver.llm.LlmBridge
+import com.zeeshan.androidllmserver.sd.SdBridge
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -30,6 +31,7 @@ class LlmHttpServer(
     private val modelName: String,
     private val port: Int = 8085,
     private val authManager: AuthManager? = null,
+    private val sdBridge: SdBridge? = null,
 ) {
     private var server: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null
 
@@ -125,6 +127,7 @@ class LlmHttpServer(
         routing {
             installOpenAiRoutes(bridge, modelName)
             installOllamaRoutes(bridge, modelName)
+            installImageRoutes(sdBridge)
         }
     }
 }
