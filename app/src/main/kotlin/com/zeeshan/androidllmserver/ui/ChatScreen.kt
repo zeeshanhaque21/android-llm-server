@@ -685,7 +685,7 @@ private fun MessageBubble(msg: ChatMsg) {
 
                 // Collapsible thinking section for assistant messages
                 if (!isUser && !isSystem && msg.thinkingContent.isNotEmpty()) {
-                    var expanded by remember { mutableStateOf(msg.isStreaming) }
+                    var expanded by remember { mutableStateOf(false) }
 
                     Row(
                         modifier = Modifier
@@ -721,15 +721,20 @@ private fun MessageBubble(msg: ChatMsg) {
                 }
 
                 // Main content (skip if content is a data:image URI — already rendered above)
-                val isImageContent = !isUser && !isSystem && msg.content.startsWith("data:image/")
+                // Strip any residual think tags that leaked through the parser
+                val cleanContent = msg.content
+                    .replace("<think>", "")
+                    .replace("</think>", "")
+                    .trimStart()
+                val isImageContent = !isUser && !isSystem && cleanContent.startsWith("data:image/")
                 val displayText = if (isImageContent) {
                     ""
-                } else if (msg.isStreaming && msg.content.isEmpty() && msg.thinkingContent.isEmpty()) {
+                } else if (msg.isStreaming && cleanContent.isEmpty() && msg.thinkingContent.isEmpty()) {
                     "..."
-                } else if (msg.isStreaming && msg.content.isNotEmpty()) {
-                    msg.content + "\u2588" // block cursor
+                } else if (msg.isStreaming && cleanContent.isNotEmpty()) {
+                    cleanContent + "\u2588" // block cursor
                 } else {
-                    msg.content
+                    cleanContent
                 }
 
                 if (displayText.isNotEmpty()) {
