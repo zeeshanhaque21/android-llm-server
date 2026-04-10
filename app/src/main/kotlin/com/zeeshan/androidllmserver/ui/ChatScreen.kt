@@ -1,6 +1,8 @@
 package com.zeeshan.androidllmserver.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +30,8 @@ import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -62,6 +66,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.zeeshan.androidllmserver.llm.LlmBridge
@@ -69,7 +74,12 @@ import com.zeeshan.androidllmserver.prefs.ServerPreferences
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-data class ChatMsg(val role: String, val content: String, val isStreaming: Boolean = false)
+data class ChatMsg(
+    val role: String,
+    val content: String,
+    val isStreaming: Boolean = false,
+    val thinkingContent: String = "",
+)
 
 private fun formatChatPrompt(messages: List<ChatMsg>): String {
     val sb = StringBuilder()
@@ -102,11 +112,12 @@ fun ChatScreen(
     var configTopP by remember { mutableFloatStateOf(0.95f) }
     var configTemperature by remember { mutableFloatStateOf(prefs.temperature) }
     var configUseGpu by remember { mutableStateOf(prefs.useGpu) }
+    var configEnableThinking by remember { mutableStateOf(false) }
 
     val primaryColor = MaterialTheme.colorScheme.primary
 
     // Auto-scroll to bottom when messages change
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content) {
+    LaunchedEffect(messages.size, messages.lastOrNull()?.content, messages.lastOrNull()?.thinkingContent) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
@@ -115,12 +126,13 @@ fun ChatScreen(
     if (showConfigDialog) {
         ConfigurationsDialog(
             onDismiss = { showConfigDialog = false },
-            onConfirm = { maxTokens, topK, topP, temperature, useGpu ->
+            onConfirm = { maxTokens, topK, topP, temperature, useGpu, enableThinking ->
                 configMaxTokens = maxTokens
                 configTopK = topK
                 configTopP = topP
                 configTemperature = temperature
                 configUseGpu = useGpu
+                configEnableThinking = enableThinking
                 prefs.temperature = temperature
                 prefs.useGpu = useGpu
                 showConfigDialog = false
@@ -130,6 +142,7 @@ fun ChatScreen(
             initialTopP = configTopP,
             initialTemperature = configTemperature,
             initialUseGpu = configUseGpu,
+            initialEnableThinking = configEnableThinking,
         )
     }
 
@@ -341,8 +354,13 @@ fun ChatScreen(
                                     isGenerating = true
 
                                     // Build prompt from all messages, prepending a system message
+                                    val systemContent = if (configEnableThinking) {
+                                        "You are a helpful assistant. Think step by step before answering. Wrap your reasoning in <think></think> tags."
+                                    } else {
+                                        "You are a helpful assistant."
+                                    }
                                     val promptMessages = buildList {
-                                        add(ChatMsg(role = "system", content = "You are a helpful assistant."))
+                                        add(ChatMsg(role = "system", content = systemContent))
                                         addAll(messages.filter { it.role == "user" || it.role == "assistant" })
                                     }
                                     val prompt = formatChatPrompt(promptMessages)
@@ -353,13 +371,104 @@ fun ChatScreen(
 
                                     scope.launch {
                                         try {
+                                            // Buffer-based thinking tag detection that handles
+                                            // tokens split across tag boundaries.
+                                            var insideThinking = false
+                                            val thinkBuf = StringBuilder()
+                                            val contentBuf = StringBuilder()
+                                            // Raw accumulator to detect tags that span tokens
+                                            val rawBuf = StringBuilder()
+
                                             bridge.generate(prompt, maxTokens = configMaxTokens).collect { token ->
-                                                val current = messages[assistantIndex]
-                                                messages[assistantIndex] = current.copy(content = current.content + token)
+                                                rawBuf.append(token)
+                                                val raw = rawBuf.toString()
+
+                                                if (!insideThinking) {
+                                                    // Check for partial opening tag at the end
+                                                    val openTag = "<think>"
+                                                    val openIdx = raw.indexOf(openTag)
+                                                    if (openIdx >= 0) {
+                                                        // Everything before the tag is content
+                                                        contentBuf.append(raw.substring(0, openIdx))
+                                                        insideThinking = true
+                                                        // Everything after the tag goes to thinking
+                                                        val afterTag = raw.substring(openIdx + openTag.length)
+                                                        rawBuf.clear()
+                                                        rawBuf.append(afterTag)
+                                                        // Process any close tag already present
+                                                        val closeIdx = afterTag.indexOf("</think>")
+                                                        if (closeIdx >= 0) {
+                                                            thinkBuf.append(afterTag.substring(0, closeIdx))
+                                                            insideThinking = false
+                                                            val remainder = afterTag.substring(closeIdx + "</think>".length)
+                                                            rawBuf.clear()
+                                                            rawBuf.append(remainder)
+                                                            contentBuf.append(remainder)
+                                                        }
+                                                    } else if (raw.endsWith("<") ||
+                                                        raw.endsWith("<t") ||
+                                                        raw.endsWith("<th") ||
+                                                        raw.endsWith("<thi") ||
+                                                        raw.endsWith("<thin") ||
+                                                        raw.endsWith("<think")
+                                                    ) {
+                                                        // Partial opening tag at end — wait for more tokens
+                                                        return@collect
+                                                    } else {
+                                                        // No tag present — flush raw to content
+                                                        contentBuf.append(raw)
+                                                        rawBuf.clear()
+                                                    }
+                                                } else {
+                                                    // Inside thinking — look for close tag
+                                                    val closeTag = "</think>"
+                                                    val closeIdx = raw.indexOf(closeTag)
+                                                    if (closeIdx >= 0) {
+                                                        thinkBuf.append(raw.substring(0, closeIdx))
+                                                        insideThinking = false
+                                                        val remainder = raw.substring(closeIdx + closeTag.length)
+                                                        rawBuf.clear()
+                                                        rawBuf.append(remainder)
+                                                        contentBuf.append(remainder)
+                                                    } else if (raw.endsWith("<") ||
+                                                        raw.endsWith("</") ||
+                                                        raw.endsWith("</t") ||
+                                                        raw.endsWith("</th") ||
+                                                        raw.endsWith("</thi") ||
+                                                        raw.endsWith("</thin") ||
+                                                        raw.endsWith("</think")
+                                                    ) {
+                                                        // Partial close tag at end — wait for more tokens
+                                                        return@collect
+                                                    } else {
+                                                        thinkBuf.append(raw)
+                                                        rawBuf.clear()
+                                                    }
+                                                }
+
+                                                // Update the message in the list
+                                                messages[assistantIndex] = ChatMsg(
+                                                    role = "assistant",
+                                                    content = contentBuf.toString(),
+                                                    thinkingContent = thinkBuf.toString(),
+                                                    isStreaming = true,
+                                                )
+                                            }
+                                            // Flush any remaining raw buffer
+                                            if (rawBuf.isNotEmpty()) {
+                                                if (insideThinking) {
+                                                    thinkBuf.append(rawBuf)
+                                                } else {
+                                                    contentBuf.append(rawBuf)
+                                                }
                                             }
                                             // Mark streaming done
-                                            val final_ = messages[assistantIndex]
-                                            messages[assistantIndex] = final_.copy(isStreaming = false)
+                                            messages[assistantIndex] = ChatMsg(
+                                                role = "assistant",
+                                                content = contentBuf.toString(),
+                                                thinkingContent = thinkBuf.toString(),
+                                                isStreaming = false,
+                                            )
                                         } catch (e: Exception) {
                                             // Show error as system message
                                             val current = messages[assistantIndex]
@@ -435,23 +544,65 @@ private fun MessageBubble(msg: ChatMsg) {
                 )
                 .padding(12.dp),
         ) {
-            val displayText = if (msg.isStreaming && msg.content.isEmpty()) {
-                "..."
-            } else if (msg.isStreaming) {
-                msg.content + "\u2588" // block cursor
-            } else {
-                msg.content
-            }
+            Column {
+                // Collapsible thinking section for assistant messages
+                if (!isUser && !isSystem && msg.thinkingContent.isNotEmpty()) {
+                    var expanded by remember { mutableStateOf(msg.isStreaming) }
 
-            Text(
-                text = displayText,
-                color = when {
-                    isUser -> MaterialTheme.colorScheme.onPrimary
-                    isSystem -> MaterialTheme.colorScheme.onErrorContainer
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
+                    Row(
+                        modifier = Modifier
+                            .clickable { expanded = !expanded }
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = "Toggle thinking",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (msg.isStreaming && msg.content.isEmpty()) "Thinking..." else "Thought process",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        )
+                    }
+
+                    AnimatedVisibility(visible = expanded) {
+                        Text(
+                            text = if (msg.isStreaming) msg.thinkingContent + "\u2588" else msg.thinkingContent,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontStyle = FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            ),
+                            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+                        )
+                    }
+                }
+
+                // Main content
+                val displayText = if (msg.isStreaming && msg.content.isEmpty() && msg.thinkingContent.isEmpty()) {
+                    "..."
+                } else if (msg.isStreaming && msg.content.isNotEmpty()) {
+                    msg.content + "\u2588" // block cursor
+                } else {
+                    msg.content
+                }
+
+                if (displayText.isNotEmpty()) {
+                    Text(
+                        text = displayText,
+                        color = when {
+                            isUser -> MaterialTheme.colorScheme.onPrimary
+                            isSystem -> MaterialTheme.colorScheme.onErrorContainer
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
         }
     }
 }
@@ -460,19 +611,20 @@ private fun MessageBubble(msg: ChatMsg) {
 @Composable
 private fun ConfigurationsDialog(
     onDismiss: () -> Unit,
-    onConfirm: (maxTokens: Int, topK: Int, topP: Float, temperature: Float, useGpu: Boolean) -> Unit,
+    onConfirm: (maxTokens: Int, topK: Int, topP: Float, temperature: Float, useGpu: Boolean, enableThinking: Boolean) -> Unit,
     initialMaxTokens: Int,
     initialTopK: Int,
     initialTopP: Float,
     initialTemperature: Float,
     initialUseGpu: Boolean,
+    initialEnableThinking: Boolean,
 ) {
     var maxTokens by remember { mutableIntStateOf(initialMaxTokens) }
     var topK by remember { mutableIntStateOf(initialTopK) }
     var topP by remember { mutableFloatStateOf(initialTopP) }
     var temperature by remember { mutableFloatStateOf(initialTemperature) }
     var useGpu by remember { mutableStateOf(initialUseGpu) }
-    var enableThinking by remember { mutableStateOf(false) }
+    var enableThinking by remember { mutableStateOf(initialEnableThinking) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -582,7 +734,7 @@ private fun ConfigurationsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(maxTokens, topK, topP, temperature, useGpu) }) {
+            TextButton(onClick = { onConfirm(maxTokens, topK, topP, temperature, useGpu, enableThinking) }) {
                 Text("OK")
             }
         },
