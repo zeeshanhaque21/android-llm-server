@@ -8,18 +8,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,8 +40,8 @@ import com.zeeshan.androidllmserver.auth.AuthManager
 import com.zeeshan.androidllmserver.prefs.ServerPreferences
 
 @Composable
-fun SettingsScreen(
-    onBack: () -> Unit,
+fun SettingsDialog(
+    onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val prefs = remember { ServerPreferences(context) }
@@ -64,27 +61,22 @@ fun SettingsScreen(
     var nThreadsText by remember { mutableStateOf(prefs.nThreads.toString()) }
     var temperatureText by remember { mutableStateOf(prefs.temperature.toString()) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Settings", style = MaterialTheme.typography.titleLarge)
-            TextButton(onClick = onBack) { Text("Back") }
-        }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Settings", style = MaterialTheme.typography.titleLarge)
+                Text("v0.1.0", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // --- Server Section ---
+                Text("Server", style = MaterialTheme.typography.titleMedium)
 
-        // --- Server Section ---
-        Text("Server", style = MaterialTheme.typography.titleMedium)
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // HTTP Port
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -120,8 +112,6 @@ fun SettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
-
                 // Auto-start on boot
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -140,29 +130,9 @@ fun SettingsScreen(
 
                 HorizontalDivider()
 
-                // Bind mode (static for now)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("Bind mode", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "0.0.0.0 (all interfaces)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+                // --- Authentication Section ---
+                Text("Authentication", style = MaterialTheme.typography.titleMedium)
 
-        // --- Authentication Section ---
-        Spacer(Modifier.height(4.dp))
-        Text("Authentication", style = MaterialTheme.typography.titleMedium)
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Auth enabled toggle
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -178,40 +148,32 @@ fun SettingsScreen(
                     )
                 }
 
-                HorizontalDivider()
-
                 // Bearer token display
-                Text("Bearer Token", style = MaterialTheme.typography.labelMedium)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
                         currentToken,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = {
+                    IconButton(onClick = {
                         copyToClipboard(context, "Bearer Token", currentToken)
                     }) {
-                        Text("Copy")
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Copy token")
                     }
                 }
 
-                // Regenerate button
                 OutlinedButton(onClick = { showRegenDialog = true }) {
                     Text("Regenerate Token")
                 }
-            }
-        }
 
-        // --- Model Defaults Section ---
-        Spacer(Modifier.height(4.dp))
-        Text("Model Defaults", style = MaterialTheme.typography.titleMedium)
+                HorizontalDivider()
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Context size
+                // --- Model Defaults Section ---
+                Text("Model Defaults", style = MaterialTheme.typography.titleMedium)
+
                 OutlinedTextField(
                     value = nCtxText,
                     onValueChange = { nCtxText = it.filter { c -> c.isDigit() } },
@@ -220,7 +182,6 @@ fun SettingsScreen(
                     singleLine = true,
                 )
 
-                // Thread count
                 OutlinedTextField(
                     value = nThreadsText,
                     onValueChange = { nThreadsText = it.filter { c -> c.isDigit() } },
@@ -229,7 +190,6 @@ fun SettingsScreen(
                     singleLine = true,
                 )
 
-                // Temperature
                 OutlinedTextField(
                     value = temperatureText,
                     onValueChange = { temperatureText = it.filter { c -> c.isDigit() || c == '.' } },
@@ -264,28 +224,24 @@ fun SettingsScreen(
                 }) {
                     Text("Save Model Defaults")
                 }
-            }
-        }
 
-        // --- About Section ---
-        Spacer(Modifier.height(4.dp))
-        Text("About", style = MaterialTheme.typography.titleMedium)
+                HorizontalDivider()
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("android-llm-server", style = MaterialTheme.typography.bodyLarge)
-                Text("Version 0.1.0", style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(4.dp))
+                // --- About Section ---
+                Text("About", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "A headless LLM inference server for Android. Runs llama.cpp locally and exposes an OpenAI-compatible HTTP API on your LAN.",
+                    "android-llm-server v0.1.0 \u2014 A headless LLM inference server for Android. Runs llama.cpp locally and exposes an OpenAI-compatible HTTP API on your LAN.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-
-        Spacer(Modifier.height(16.dp))
-    }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+    )
 
     // Regenerate token confirmation dialog
     if (showRegenDialog) {

@@ -17,8 +17,9 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,27 +27,48 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zeeshan.androidllmserver.auth.AuthManager
 import com.zeeshan.androidllmserver.model.CatalogEntry
@@ -56,7 +78,8 @@ import com.zeeshan.androidllmserver.model.ModelRepository
 import com.zeeshan.androidllmserver.prefs.ServerPreferences
 import com.zeeshan.androidllmserver.service.LlmService
 import com.zeeshan.androidllmserver.ui.ModelsScreen
-import com.zeeshan.androidllmserver.ui.SettingsScreen
+import com.zeeshan.androidllmserver.ui.SettingsDialog
+import com.zeeshan.androidllmserver.ui.theme.LlmServerTheme
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -113,6 +136,7 @@ class MainActivity : ComponentActivity() {
         startLlmService()
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -130,11 +154,57 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
-                when (currentScreen) {
-                    Screen.SERVER -> {
-                        Scaffold { padding ->
-                            val scope = rememberCoroutineScope()
+            LlmServerTheme {
+                val drawerState = rememberDrawerState(DrawerValue.Closed)
+                val scope = rememberCoroutineScope()
+                var showSettingsDialog by mutableStateOf(false)
+
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        ModalDrawerSheet {
+                            Spacer(Modifier.height(24.dp))
+                            Text(
+                                "android-llm-server",
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            NavigationDrawerItem(
+                                icon = { Icon(Icons.Default.Home, contentDescription = null) },
+                                label = { Text("Home") },
+                                selected = currentScreen == Screen.SERVER,
+                                onClick = {
+                                    currentScreen = Screen.SERVER
+                                    scope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                            )
+                            NavigationDrawerItem(
+                                icon = { Icon(Icons.Default.Storage, contentDescription = null) },
+                                label = { Text("Models") },
+                                selected = currentScreen == Screen.MODELS,
+                                onClick = {
+                                    currentScreen = Screen.MODELS
+                                    scope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                            )
+                            NavigationDrawerItem(
+                                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                label = { Text("Settings") },
+                                selected = false,
+                                onClick = {
+                                    showSettingsDialog = true
+                                    scope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                            )
+                        }
+                    },
+                ) {
+                    when (currentScreen) {
+                        Screen.SERVER -> {
                             val selectedName = selectedModelPath
                                 ?.substringAfterLast('/')
                                 ?: "No model selected"
@@ -146,203 +216,336 @@ class MainActivity : ComponentActivity() {
                             var showSamsungWarning by mutableStateOf(
                                 isSamsung && !serverPreferences.samsungWarningDismissed
                             )
+                            val isRunning = serviceStatus == "running"
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(padding)
-                                    .padding(16.dp)
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                horizontalAlignment = Alignment.Start,
-                            ) {
-                                // Title row with settings gear
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column {
-                                        Text("android-llm-server", style = MaterialTheme.typography.titleLarge)
-                                        Text("LLM inference server", style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    IconButton(onClick = { currentScreen = Screen.SETTINGS }) {
-                                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                                    }
-                                }
-
-                                // Samsung One UI warning
-                                if (showSamsungWarning) {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                        ),
-                                    ) {
-                                        Column(modifier = Modifier.padding(16.dp)) {
-                                            Text(
-                                                "Samsung Device Detected",
-                                                style = MaterialTheme.typography.titleSmall,
-                                            )
-                                            Spacer(Modifier.height(8.dp))
-                                            Text(
-                                                "For reliable operation on Samsung devices:",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                            )
-                                            Spacer(Modifier.height(4.dp))
-                                            Text(
-                                                "1. Settings \u2192 Apps \u2192 android-llm-server \u2192 Battery \u2192 Unrestricted",
-                                                style = MaterialTheme.typography.bodySmall,
-                                            )
-                                            Text(
-                                                "2. Settings \u2192 Device care \u2192 Battery \u2192 Background usage limits \u2192 Never sleeping apps \u2192 Add this app",
-                                                style = MaterialTheme.typography.bodySmall,
-                                            )
-                                            Spacer(Modifier.height(8.dp))
-                                            TextButton(onClick = {
-                                                serverPreferences.samsungWarningDismissed = true
-                                                showSamsungWarning = false
-                                            }) {
-                                                Text("Dismiss")
+                            Scaffold(
+                                topBar = {
+                                    TopAppBar(
+                                        title = { Text("android-llm-server") },
+                                        navigationIcon = {
+                                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                                Icon(Icons.Default.Menu, contentDescription = "Menu")
                                             }
-                                        }
-                                    }
-                                }
-
-                                Text(
-                                    "Model: $selectedName",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    "Status: $serviceStatus",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-
-                                // Server URL with IP
-                                if (wifiIp != null) {
-                                    Text(
-                                        "Server URL: http://$wifiIp:$port",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                        ),
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                } else {
-                                    Text(
-                                        "Server URL: not connected to WiFi",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-
-                                // Bearer token (tap to copy)
-                                if (authManager.authEnabled) {
-                                    Text(
-                                        "Token: $token",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.clickable {
-                                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("Bearer Token", token))
-                                            Toast.makeText(this@MainActivity, "Token copied", Toast.LENGTH_SHORT).show()
                                         },
                                     )
-                                    Text(
-                                        "Tap token to copy",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    modifier = Modifier.fillMaxWidth(),
+                                },
+                            ) { padding ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(padding)
+                                        .padding(horizontal = 16.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp),
                                 ) {
-                                    Button(
-                                        onClick = { requestStartService() },
-                                        enabled = (serviceStatus == "stopped" || serviceStatus == "disconnected")
-                                            && selectedModelPath != null,
-                                    ) {
-                                        Text("Start Server")
+                                    Spacer(Modifier.height(4.dp))
+
+                                    // Hero
+                                    Column {
+                                        Row {
+                                            Text(
+                                                "android-",
+                                                style = MaterialTheme.typography.headlineLarge,
+                                            )
+                                            Text(
+                                                "LLM Server",
+                                                style = MaterialTheme.typography.headlineLarge,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                        Text(
+                                            "Local LLM inference over your network",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
                                     }
 
-                                    OutlinedButton(
-                                        onClick = { stopLlmService() },
-                                        enabled = serviceBound,
-                                    ) {
-                                        Text("Stop Server")
-                                    }
-                                }
-
-                                // Models button
-                                OutlinedButton(onClick = { currentScreen = Screen.MODELS }) {
-                                    Text("Models")
-                                }
-
-                                // Test generate button — keeps smoke test capability
-                                Button(
-                                    onClick = {
-                                        val svc = llmService ?: return@Button
-                                        val bridge = svc.bridge ?: return@Button
-                                        testOutput = ""
-                                        scope.launch {
-                                            runCatching {
-                                                svc.setGenerating(true)
-                                                bridge.generate(SMOKE_PROMPT, maxTokens = 128).collect { tok ->
-                                                    testOutput += tok
+                                    // Samsung One UI warning
+                                    if (showSamsungWarning) {
+                                        OutlinedCard(
+                                            modifier = Modifier.fillMaxWidth(),
+                                        ) {
+                                            Row(modifier = Modifier.padding(16.dp)) {
+                                                Icon(
+                                                    Icons.Default.Warning,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.tertiary,
+                                                    modifier = Modifier.padding(end = 12.dp),
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        "Samsung Device Detected",
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                    )
+                                                    Spacer(Modifier.height(8.dp))
+                                                    Text(
+                                                        "For reliable operation on Samsung devices:",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                    )
+                                                    Spacer(Modifier.height(4.dp))
+                                                    Text(
+                                                        "1. Settings \u2192 Apps \u2192 android-llm-server \u2192 Battery \u2192 Unrestricted",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                    )
+                                                    Text(
+                                                        "2. Settings \u2192 Device care \u2192 Battery \u2192 Background usage limits \u2192 Never sleeping apps \u2192 Add this app",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                    )
+                                                    Spacer(Modifier.height(8.dp))
+                                                    TextButton(onClick = {
+                                                        serverPreferences.samsungWarningDismissed = true
+                                                        showSamsungWarning = false
+                                                    }) {
+                                                        Text("Dismiss")
+                                                    }
                                                 }
-                                                svc.setGenerating(false)
-                                            }.onFailure { e ->
-                                                Log.e(TAG, "Test generate failed", e)
-                                                testOutput = "Error: ${e.message}"
-                                                svc.setGenerating(false)
                                             }
                                         }
-                                    },
-                                    enabled = serviceBound && llmService?.isModelLoaded == true,
-                                ) {
-                                    Text("Test Generate")
-                                }
+                                    }
 
-                                if (testOutput.isNotEmpty()) {
+                                    // Server Status Card
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            // Status indicator row
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(12.dp)
+                                                        .clip(CircleShape)
+                                                        .background(
+                                                            if (isRunning) Color(0xFF81C995)
+                                                            else Color(0xFF5F6368)
+                                                        ),
+                                                )
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(
+                                                    if (isRunning) "Running" else serviceStatus.replaceFirstChar { it.uppercase() },
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                )
+                                            }
+
+                                            if (isRunning || serviceStatus == "loading model...") {
+                                                // Server URL
+                                                if (wifiIp != null) {
+                                                    Text(
+                                                        "http://$wifiIp:$port",
+                                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                                            fontFamily = FontFamily.Monospace,
+                                                        ),
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        "Not connected to WiFi",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+
+                                                // Model name
+                                                Text(
+                                                    "Model: $selectedName",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+
+                                                // Bearer token (truncated + copy)
+                                                if (authManager.authEnabled) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            "Token: ${token.take(16)}...",
+                                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                                fontFamily = FontFamily.Monospace,
+                                                            ),
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.weight(1f),
+                                                        )
+                                                        IconButton(onClick = {
+                                                            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                            clipboard.setPrimaryClip(ClipData.newPlainText("Bearer Token", token))
+                                                            Toast.makeText(this@MainActivity, "Token copied", Toast.LENGTH_SHORT).show()
+                                                        }) {
+                                                            Icon(
+                                                                Icons.Default.ContentCopy,
+                                                                contentDescription = "Copy token",
+                                                                modifier = Modifier.size(18.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Start / Stop buttons
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) {
+                                                Button(
+                                                    onClick = { requestStartService() },
+                                                    enabled = (serviceStatus == "stopped" || serviceStatus == "disconnected")
+                                                        && selectedModelPath != null,
+                                                ) {
+                                                    Text("Start Server")
+                                                }
+
+                                                OutlinedButton(
+                                                    onClick = { stopLlmService() },
+                                                    enabled = serviceBound,
+                                                ) {
+                                                    Text("Stop Server")
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Quick Actions
                                     Text(
-                                        testOutput,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.padding(top = 8.dp),
+                                        "Quick Actions",
+                                        style = MaterialTheme.typography.titleMedium,
                                     )
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        // Test API card
+                                        OutlinedCard(
+                                            onClick = {
+                                                val svc = llmService ?: return@OutlinedCard
+                                                val bridge = svc.bridge ?: return@OutlinedCard
+                                                testOutput = ""
+                                                scope.launch {
+                                                    runCatching {
+                                                        svc.setGenerating(true)
+                                                        bridge.generate(SMOKE_PROMPT, maxTokens = 128).collect { tok ->
+                                                            testOutput += tok
+                                                        }
+                                                        svc.setGenerating(false)
+                                                    }.onFailure { e ->
+                                                        Log.e(TAG, "Test generate failed", e)
+                                                        testOutput = "Error: ${e.message}"
+                                                        svc.setGenerating(false)
+                                                    }
+                                                }
+                                            },
+                                            enabled = serviceBound && llmService?.isModelLoaded == true,
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFF81C995).copy(alpha = 0.2f)),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF81C995),
+                                                    )
+                                                }
+                                                Spacer(Modifier.height(8.dp))
+                                                Text(
+                                                    "Test API",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                )
+                                                Text(
+                                                    "Run a smoke test",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+
+                                        // Server Logs card
+                                        OutlinedCard(
+                                            onClick = {
+                                                Toast.makeText(this@MainActivity, "Coming soon", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFF8AB4F8).copy(alpha = 0.2f)),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    Icon(
+                                                        Icons.AutoMirrored.Filled.List,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF8AB4F8),
+                                                    )
+                                                }
+                                                Spacer(Modifier.height(8.dp))
+                                                Text(
+                                                    "Server Logs",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                )
+                                                Text(
+                                                    "View request history",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // Test output
+                                    if (testOutput.isNotEmpty()) {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            ),
+                                        ) {
+                                            Text(
+                                                testOutput,
+                                                style = MaterialTheme.typography.bodyMedium.copy(
+                                                    fontFamily = FontFamily.Monospace,
+                                                ),
+                                                modifier = Modifier.padding(16.dp),
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(Modifier.height(16.dp))
                                 }
                             }
                         }
-                    }
 
-                    Screen.MODELS -> {
-                        Scaffold { padding ->
-                            Column(modifier = Modifier.padding(padding)) {
-                                ModelsScreen(
-                                    modelRepository = modelRepository,
-                                    catalog = catalogEntries,
-                                    downloadManager = downloadManager,
-                                    activeModelPath = activeModelPath,
-                                    onLoadModel = { path ->
-                                        selectedModelPath = path
-                                        currentScreen = Screen.SERVER
-                                    },
-                                    onBack = { currentScreen = Screen.SERVER },
-                                )
-                            }
+                        Screen.MODELS -> {
+                            ModelsScreen(
+                                modelRepository = modelRepository,
+                                catalog = catalogEntries,
+                                downloadManager = downloadManager,
+                                activeModelPath = activeModelPath,
+                                onLoadModel = { path ->
+                                    selectedModelPath = path
+                                    currentScreen = Screen.SERVER
+                                },
+                                onBack = { currentScreen = Screen.SERVER },
+                            )
+                        }
+
+                        Screen.SETTINGS -> {
+                            // Not used — settings shown as dialog
                         }
                     }
 
-                    Screen.SETTINGS -> {
-                        Scaffold { padding ->
-                            Column(modifier = Modifier.padding(padding)) {
-                                SettingsScreen(
-                                    onBack = { currentScreen = Screen.SERVER },
-                                )
-                            }
-                        }
+                    // Settings dialog overlay
+                    if (showSettingsDialog) {
+                        SettingsDialog(onDismiss = { showSettingsDialog = false })
                     }
                 }
             }

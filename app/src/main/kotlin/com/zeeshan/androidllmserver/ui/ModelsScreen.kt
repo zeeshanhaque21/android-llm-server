@@ -4,23 +4,33 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +39,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.zeeshan.androidllmserver.model.CatalogEntry
@@ -39,6 +50,7 @@ import com.zeeshan.androidllmserver.model.ModelRepository
 import com.zeeshan.androidllmserver.model.formatBytes
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelsScreen(
     modelRepository: ModelRepository,
@@ -59,6 +71,7 @@ fun ModelsScreen(
     var downloadError by remember { mutableStateOf<String?>(null) }
     var deleteConfirmModel by remember { mutableStateOf<ModelFile?>(null) }
     var customUrl by remember { mutableStateOf("") }
+    var showCustomUrlDialog by remember { mutableStateOf(false) }
 
     // Cancel download if we leave the screen
     DisposableEffect(Unit) {
@@ -102,195 +115,266 @@ fun ModelsScreen(
     val installedFileNames = installedModels.map { it.name }.toSet()
     val availableCatalog = catalog.filter { it.fileName !in installedFileNames }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Models (${installedModels.size})") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showCustomUrlDialog = true }) {
+                Icon(Icons.Default.Add, contentDescription = "Add model from URL")
+            }
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.padding(padding).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Models", style = MaterialTheme.typography.titleLarge)
-            TextButton(onClick = onBack) { Text("Back") }
-        }
-
-        // --- Download progress ---
-        if (isDownloading) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Downloading: $downloadFileName",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
-                        progress = { downloadProgress },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "${(downloadProgress * 100).toInt()}%  -  ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(onClick = {
-                        downloadManager.cancel()
-                    }) {
-                        Text("Cancel")
+            // Download error banner
+            downloadError?.let { error ->
+                item {
+                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Download failed: $error",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            TextButton(onClick = { downloadError = null }) { Text("Dismiss") }
+                        }
                     }
                 }
             }
-        }
 
-        // --- Download error ---
-        downloadError?.let { error ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                ),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Download failed: $error", style = MaterialTheme.typography.bodyMedium)
-                    TextButton(onClick = { downloadError = null }) { Text("Dismiss") }
+            // Empty state banner
+            if (installedModels.isEmpty() && !isDownloading) {
+                item {
+                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                "Download a model to get started",
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Choose from the catalog below or tap + to add a custom URL",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
+
+            // Installed section
+            if (installedModels.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Installed", style = MaterialTheme.typography.titleMedium)
+                }
+
+                items(installedModels, key = { it.path }) { model ->
+                    val isActive = model.path == activeModelPath
+                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                model.name,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                ),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${model.sizeBytes / 1_000_000} MB",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (isActive) {
+                                    FilledTonalButton(
+                                        onClick = {},
+                                        enabled = false,
+                                    ) {
+                                        Text("Running")
+                                    }
+                                } else {
+                                    Button(onClick = { onLoadModel(model.path) }) {
+                                        Text("Load")
+                                    }
+                                    TextButton(
+                                        onClick = { deleteConfirmModel = model },
+                                        colors = ButtonDefaults.textButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.error,
+                                        ),
+                                    ) {
+                                        Text("Delete")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Available section
+            if (availableCatalog.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Available", style = MaterialTheme.typography.titleMedium)
+                }
+
+                items(availableCatalog, key = { it.fileName }) { entry ->
+                    val isDownloadingThis = isDownloading && downloadFileName == entry.fileName
+                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                entry.name,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                ),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${entry.sizeBytes / 1_000_000} MB",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                entry.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(12.dp))
+
+                            if (isDownloadingThis) {
+                                LinearProgressIndicator(
+                                    progress = { downloadProgress },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        "${(downloadProgress * 100).toInt()}% - ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    TextButton(onClick = { downloadManager.cancel() }) {
+                                        Text("Cancel")
+                                    }
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { startDownload(entry.url, entry.fileName) },
+                                    enabled = !isDownloading,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Download,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 4.dp),
+                                    )
+                                    Text("Download")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Downloading non-catalog item progress
+            if (isDownloading && availableCatalog.none { it.fileName == downloadFileName } && installedModels.none { it.name == downloadFileName }) {
+                item {
+                    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Downloading: $downloadFileName",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    "${(downloadProgress * 100).toInt()}% - ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                TextButton(onClick = { downloadManager.cancel() }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(Modifier.height(80.dp)) } // FAB clearance
         }
+    }
 
-        // --- Installed models ---
-        Text("Installed Models", style = MaterialTheme.typography.titleMedium)
-
-        if (installedModels.isEmpty()) {
-            Text(
-                "No models installed. Download one below.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        installedModels.forEach { model ->
-            val isActive = model.path == activeModelPath
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = if (isActive) {
-                    CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                } else {
-                    CardDefaults.cardColors()
-                },
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(model.name, style = MaterialTheme.typography.bodyLarge)
+    // Custom URL dialog
+    if (showCustomUrlDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomUrlDialog = false },
+            title = { Text("Download from URL") },
+            text = {
+                Column {
                     Text(
-                        formatBytes(model.sizeBytes),
+                        "Paste a direct link to any .gguf file (e.g. from HuggingFace)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (isActive) {
-                        Text(
-                            "Currently loaded",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = { onLoadModel(model.path) },
-                            enabled = !isActive,
-                        ) {
-                            Text(if (isActive) "Loaded" else "Load")
-                        }
-                        OutlinedButton(
-                            onClick = { deleteConfirmModel = model },
-                            enabled = !isActive,
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            ),
-                        ) {
-                            Text("Delete")
-                        }
-                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = customUrl,
+                        onValueChange = { customUrl = it },
+                        label = { Text("GGUF URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
                 }
-            }
-        }
-
-        // --- Available models (from catalog) ---
-        if (availableCatalog.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text("Available Models", style = MaterialTheme.typography.titleMedium)
-
-            availableCatalog.forEach { entry ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(entry.name, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            entry.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            formatBytes(entry.sizeBytes),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { startDownload(entry.url, entry.fileName) },
-                            enabled = !isDownloading,
-                        ) {
-                            Text("Download")
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- Custom URL download ---
-        Spacer(Modifier.height(8.dp))
-        Text("Download from URL", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Paste a direct link to any .gguf file (e.g. from HuggingFace)",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        OutlinedTextField(
-            value = customUrl,
-            onValueChange = { customUrl = it },
-            label = { Text("GGUF URL") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
-
-        Button(
-            onClick = {
-                val fileName = customUrl.substringAfterLast('/').let { name ->
-                    if (name.endsWith(".gguf", ignoreCase = true)) name
-                    else "$name.gguf"
-                }
-                startDownload(customUrl.trim(), fileName)
-                customUrl = ""
             },
-            enabled = !isDownloading && customUrl.isNotBlank(),
-        ) {
-            Text("Download from URL")
-        }
-
-        // Bottom spacing
-        Spacer(Modifier.height(16.dp))
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val fileName = customUrl.substringAfterLast('/').let { name ->
+                            if (name.endsWith(".gguf", ignoreCase = true)) name
+                            else "$name.gguf"
+                        }
+                        startDownload(customUrl.trim(), fileName)
+                        customUrl = ""
+                        showCustomUrlDialog = false
+                    },
+                    enabled = customUrl.isNotBlank(),
+                ) {
+                    Text("Download")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    customUrl = ""
+                    showCustomUrlDialog = false
+                }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
-    // --- Delete confirmation dialog ---
+    // Delete confirmation dialog
     deleteConfirmModel?.let { model ->
         AlertDialog(
             onDismissRequest = { deleteConfirmModel = null },
