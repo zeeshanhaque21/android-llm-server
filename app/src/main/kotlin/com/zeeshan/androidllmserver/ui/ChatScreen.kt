@@ -105,9 +105,11 @@ private fun formatChatPrompt(messages: List<ChatMsg>): String {
 @Composable
 fun ChatScreen(
     bridge: LlmBridge?,
+    sdBridge: com.zeeshan.androidllmserver.sd.SdBridge? = null,
     modelName: String,
     onBack: () -> Unit,
 ) {
+    val isImageModel = sdBridge != null && bridge == null
     val context = LocalContext.current
     val prefs = remember { ServerPreferences(context) }
     val messages = remember { mutableStateListOf<ChatMsg>() }
@@ -423,7 +425,7 @@ fun ChatScreen(
                         Spacer(Modifier.weight(1f))
 
                         // Send button
-                        val canSend = !isGenerating && (inputText.isNotBlank() || attachedImageBase64 != null) && bridge != null
+                        val canSend = !isGenerating && (inputText.isNotBlank() || attachedImageBase64 != null) && (bridge != null || sdBridge != null)
                         Surface(
                             shape = CircleShape,
                             color = if (canSend) {
@@ -436,7 +438,8 @@ fun ChatScreen(
                                 onClick = {
                                     val text = inputText.trim()
                                     val imageB64 = attachedImageBase64
-                                    if (text.isEmpty() && imageB64 == null || bridge == null) return@IconButton
+                                    if (text.isEmpty() && imageB64 == null) return@IconButton
+                                    if (bridge == null && sdBridge == null) return@IconButton
 
                                     // Build the user message content — prepend marker if image attached
                                     val userContent = if (imageB64 != null) {
@@ -470,6 +473,35 @@ fun ChatScreen(
 
                                     scope.launch {
                                         try {
+                                          if (isImageModel && sdBridge != null) {
+                                            // Image generation mode
+                                            messages[assistantIndex] = ChatMsg(
+                                                role = "assistant",
+                                                content = "Generating image...",
+                                                isStreaming = true,
+                                            )
+                                            val b64 = sdBridge.generate(
+                                                prompt = text,
+                                                width = 512,
+                                                height = 512,
+                                                steps = 20,
+                                                cfgScale = 7.0f,
+                                            )
+                                            if (b64.isNotEmpty()) {
+                                                messages[assistantIndex] = ChatMsg(
+                                                    role = "assistant",
+                                                    content = "data:image/png;base64,$b64",
+                                                    isStreaming = false,
+                                                )
+                                            } else {
+                                                messages[assistantIndex] = ChatMsg(
+                                                    role = "assistant",
+                                                    content = "Image generation failed.",
+                                                    isStreaming = false,
+                                                )
+                                            }
+                                          } else if (bridge != null) {
+                                            // LLM text generation mode
                                             // Buffer-based thinking tag detection that handles
                                             // tokens split across tag boundaries.
                                             var insideThinking = false
@@ -568,6 +600,7 @@ fun ChatScreen(
                                                 thinkingContent = thinkBuf.toString(),
                                                 isStreaming = false,
                                             )
+                                          } // end else if (bridge != null)
                                         } catch (e: Exception) {
                                             // Show error as system message
                                             val current = messages[assistantIndex]

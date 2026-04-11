@@ -603,6 +603,7 @@ class MainActivity : ComponentActivity() {
                                 ?: "Unknown model"
                             ChatScreen(
                                 bridge = llmService?.bridge,
+                                sdBridge = llmService?.sdBridge,
                                 modelName = modelLabel,
                                 onBack = { currentScreen = Screen.SERVER },
                             )
