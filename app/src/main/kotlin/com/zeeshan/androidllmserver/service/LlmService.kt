@@ -134,7 +134,9 @@ class LlmService : Service() {
                 if (isSD) {
                     SdBridge.ensureNativeLoaded()
                     val sb = SdBridge()
-                    sb.load(modelPath, useGpu = serverPrefs.useGpu)
+                    // Force CPU for SD — Vulkan init crashes on some Adreno drivers
+                    // due to ggml symbol conflicts with llama.cpp in the same process
+                    sb.load(modelPath, useGpu = false)
                     sdBridge = sb
                     bridge = null
                     Log.i(TAG, "SD model loaded: $modelPath")

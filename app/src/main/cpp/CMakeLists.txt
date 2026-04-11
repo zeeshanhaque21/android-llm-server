@@ -61,14 +61,22 @@ set(SD_DIR ${CMAKE_CURRENT_LIST_DIR}/stable-diffusion.cpp)
 if(EXISTS ${SD_DIR}/CMakeLists.txt)
     message(STATUS "Building stable-diffusion.cpp")
 
-    # SD build options
+    # SD build options — Vulkan disabled for SD because init_backend()
+    # crashes on Adreno 640 when both llama.cpp and SD try to init Vulkan
+    # in the same process. SD runs CPU-only for now.
+    # We save/restore GGML_VULKAN so llama.cpp keeps its Vulkan support.
+    set(_SAVED_GGML_VULKAN ${GGML_VULKAN})
     set(SD_BUILD_EXAMPLES  OFF CACHE BOOL "" FORCE)
     set(SD_BUILD_SERVER    OFF CACHE BOOL "" FORCE)
-    set(SD_VULKAN          ON  CACHE BOOL "" FORCE)
+    set(SD_VULKAN          OFF CACHE BOOL "" FORCE)
     set(SD_FLASH_ATTN      ON  CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS  OFF CACHE BOOL "" FORCE)
+    set(GGML_VULKAN        OFF CACHE BOOL "" FORCE)
 
     add_subdirectory(${SD_DIR} build-sd)
+
+    # Restore Vulkan for any subsequent targets
+    set(GGML_VULKAN ${_SAVED_GGML_VULKAN} CACHE BOOL "" FORCE)
 
     add_library(sdbridge SHARED sd_bridge.cpp)
 
