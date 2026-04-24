@@ -1,8 +1,29 @@
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Resolve a keystore for release builds.
+//
+// Priority:
+//   1. ANDROID_KEYSTORE_PATH  (explicit — use a real release key in CI)
+//   2. ~/.android/debug.keystore  (auto-created by any Gradle Android
+//      build; installable on-device but NOT meant for store distribution)
+//
+// The auto-fallback is so `make release` produces an installable APK on
+// a fresh checkout without manual keystore setup. Anyone shipping past
+// "send it to my own phone" should set the env vars to point at a
+// proper keystore.
+val envKeystore: String? = System.getenv("ANDROID_KEYSTORE_PATH")
+val debugKeystore: String = "${System.getProperty("user.home")}/.android/debug.keystore"
+val resolvedKeystore: String? = when {
+    envKeystore != null && File(envKeystore).exists() -> envKeystore
+    File(debugKeystore).exists() -> debugKeystore
+    else -> null
 }
 
 android {
@@ -43,6 +64,17 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            if (resolvedKeystore != null) {
+                storeFile     = file(resolvedKeystore)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: "android"
+                keyAlias      = System.getenv("ANDROID_KEY_ALIAS")         ?: "androiddebugkey"
+                keyPassword   = System.getenv("ANDROID_KEY_PASSWORD")      ?: "android"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -50,6 +82,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Only wire the signing config when we actually have a keystore;
+            // otherwise the output is "-unsigned" and the Makefile warns.
+            if (resolvedKeystore != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

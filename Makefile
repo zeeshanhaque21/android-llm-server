@@ -5,8 +5,13 @@
 APP_ID        := com.zeeshan.androidllmserver
 MAIN_ACTIVITY := $(APP_ID)/.MainActivity
 DEBUG_APK     := app/build/outputs/apk/debug/app-debug.apk
-RELEASE_APK   := app/build/outputs/apk/release/app-release.apk
+RELEASE_DIR   := app/build/outputs/apk/release
 GRADLE        := ./gradlew
+
+# Pick whichever release APK Gradle produced: signed if the build.gradle
+# keystore config resolved, otherwise the "-unsigned" variant that GitHub
+# Releases accepts but devices refuse to install.
+release_apk = $(firstword $(wildcard $(RELEASE_DIR)/app-release.apk $(RELEASE_DIR)/app-release-unsigned.apk))
 
 # Gradle 8.10 refuses to launch on JDK 24+, and this project targets
 # Java 17 bytecode. If the caller didn't set JAVA_HOME, scan the usual
@@ -111,7 +116,7 @@ install: build
 	adb install -r $(DEBUG_APK)
 
 install-release: release
-	adb install -r $(RELEASE_APK)
+	adb install -r $(release_apk)
 
 run: install
 	adb shell am start -n $(MAIN_ACTIVITY)
@@ -129,7 +134,7 @@ logcat:
 # ---------- publishing ----------
 
 apk-info:
-	@ls -lh $(DEBUG_APK) $(RELEASE_APK) 2>/dev/null || true
+	@ls -lh $(DEBUG_APK) $(release_apk) 2>/dev/null || true
 	@echo "versionName: $(VERSION)"
 	@echo "tag:         $(TAG)"
 	@echo "gh repo:     $(GH_REPO)"
@@ -144,18 +149,24 @@ tag:
 # Override VERSION/TAG on the command line to republish a specific version.
 publish: release
 	@command -v gh >/dev/null 2>&1 || (echo "gh CLI not found. Install from https://cli.github.com/" && exit 1)
-	@test -f $(RELEASE_APK) || (echo "Release APK missing: $(RELEASE_APK)" && exit 1)
-	@if ! gh release view $(TAG) >/dev/null 2>&1; then \
+	@APK="$$(ls app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/app-release-unsigned.apk 2>/dev/null | head -n1)"; \
+	if [ -z "$$APK" ]; then echo "Release APK missing in app/build/outputs/apk/release/"; exit 1; fi; \
+	case "$$APK" in \
+	  *-unsigned.apk) echo "WARNING: uploading UNSIGNED apk ($$APK) — Android will refuse to install it."; \
+	    echo "         set ANDROID_KEYSTORE_PATH (and *_PASSWORD / *_ALIAS) before 'make release' to sign."; ;; \
+	esac; \
+	if ! gh release view $(TAG) >/dev/null 2>&1; then \
 	  echo "Creating release $(TAG)"; \
 	  gh release create $(TAG) --title "$(TAG)" --notes "Release $(TAG)" || exit 1; \
-	fi
-	@echo "Uploading $(RELEASE_APK) to $(TAG)"
-	gh release upload $(TAG) $(RELEASE_APK) --clobber
+	fi; \
+	echo "Uploading $$APK to $(TAG)"; \
+	gh release upload $(TAG) "$$APK" --clobber
 
 publish-draft: release
 	@command -v gh >/dev/null 2>&1 || (echo "gh CLI not found. Install from https://cli.github.com/" && exit 1)
-	@test -f $(RELEASE_APK) || (echo "Release APK missing: $(RELEASE_APK)" && exit 1)
-	@if ! gh release view $(TAG) >/dev/null 2>&1; then \
+	@APK="$$(ls app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/app-release-unsigned.apk 2>/dev/null | head -n1)"; \
+	if [ -z "$$APK" ]; then echo "Release APK missing in app/build/outputs/apk/release/"; exit 1; fi; \
+	if ! gh release view $(TAG) >/dev/null 2>&1; then \
 	  gh release create $(TAG) --draft --title "$(TAG)" --notes "Release $(TAG)" || exit 1; \
-	fi
-	gh release upload $(TAG) $(RELEASE_APK) --clobber
+	fi; \
+	gh release upload $(TAG) "$$APK" --clobber
