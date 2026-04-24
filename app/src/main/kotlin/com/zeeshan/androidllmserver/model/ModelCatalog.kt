@@ -13,6 +13,12 @@ data class CatalogEntry(
     val description: String,
     val type: String = "llm",   // "llm" or "image"
     val plus: Boolean = false,  // hidden unless Plus enabled in settings
+    // Optional multimodal projector sidecar (vision / audio encoder).
+    // When set, the downloader fetches it next to the main model as
+    // "<fileName>.mmproj.gguf" and the inference layer loads it to enable
+    // image and/or audio inputs.
+    val mmprojUrl: String? = null,
+    val mmprojSizeBytes: Long = 0L,
 )
 
 class ModelCatalog(private val context: Context) {

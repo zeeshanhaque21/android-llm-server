@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.zeeshan.androidllmserver.model.CatalogEntry
 import com.zeeshan.androidllmserver.model.DownloadProgress
+import kotlinx.coroutines.flow.Flow
 import com.zeeshan.androidllmserver.model.GgufFileInfo
 import com.zeeshan.androidllmserver.model.ModelDownloadManager
 import com.zeeshan.androidllmserver.model.ModelFile
@@ -89,13 +90,13 @@ fun ModelsScreen(
         installedModels = modelRepository.listModels()
     }
 
-    fun startDownload(url: String, fileName: String) {
+    fun startDownloadFlow(fileName: String, flow: Flow<DownloadProgress>) {
         isDownloading = true
         downloadFileName = fileName
         downloadProgress = 0f
         downloadError = null
         scope.launch {
-            downloadManager.download(url, fileName).collect { progress ->
+            flow.collect { progress ->
                 when (progress) {
                     is DownloadProgress.InProgress -> {
                         downloadProgress = progress.fraction
@@ -116,6 +117,12 @@ fun ModelsScreen(
             }
         }
     }
+
+    fun startDownload(url: String, fileName: String) =
+        startDownloadFlow(fileName, downloadManager.download(url, fileName))
+
+    fun startDownloadEntry(entry: CatalogEntry) =
+        startDownloadFlow(entry.fileName, downloadManager.downloadEntry(entry))
 
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val plusEnabled = remember(ctx) { com.zeeshan.androidllmserver.prefs.ServerPreferences(ctx).plusEnabled }
@@ -283,7 +290,7 @@ fun ModelsScreen(
                                 }
                             } else {
                                 OutlinedButton(
-                                    onClick = { startDownload(entry.url, entry.fileName) },
+                                    onClick = { startDownloadEntry(entry) },
                                     enabled = !isDownloading,
                                 ) {
                                     Icon(

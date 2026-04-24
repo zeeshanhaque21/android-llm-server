@@ -194,6 +194,62 @@ class ModelDownloadManager(private val context: Context) {
         }
     }
 
+    /**
+     * Download a catalog entry, including its mmproj sidecar if one is
+     * specified. Progress is reported against the combined size of the
+     * main file and the mmproj, so a single progress bar represents the
+     * whole download. The mmproj is renamed on disk to
+     * "<fileName>.mmproj.gguf" so it's paired with its model unambiguously.
+     */
+    fun downloadEntry(entry: CatalogEntry): Flow<DownloadProgress> = flow {
+        val mmprojUrl = entry.mmprojUrl
+        val total = entry.sizeBytes + entry.mmprojSizeBytes
+        var completedOffset = 0L
+        var failed = false
+
+        // Pass 1: main model file.
+        download(entry.url, entry.fileName).collect { p ->
+            when (p) {
+                is DownloadProgress.InProgress -> emit(DownloadProgress.InProgress(
+                    fraction = if (total > 0) (completedOffset + p.downloadedBytes).toFloat() / total
+                               else p.fraction,
+                    downloadedBytes = completedOffset + p.downloadedBytes,
+                    totalBytes = if (total > 0) total else p.totalBytes,
+                ))
+                is DownloadProgress.Failed -> {
+                    emit(p); failed = true
+                }
+                is DownloadProgress.Complete -> {
+                    completedOffset += p.file.length()
+                    if (mmprojUrl == null) emit(p)
+                    // If there's an mmproj we continue below and emit Complete
+                    // only after the sidecar lands.
+                }
+            }
+        }
+
+        if (failed || mmprojUrl == null) return@flow
+
+        // Pass 2: mmproj sidecar, renamed to <fileName>.mmproj.gguf.
+        val mmprojFileName = entry.fileName + ".mmproj.gguf"
+        download(mmprojUrl, mmprojFileName).collect { p ->
+            when (p) {
+                is DownloadProgress.InProgress -> emit(DownloadProgress.InProgress(
+                    fraction = if (total > 0) (completedOffset + p.downloadedBytes).toFloat() / total
+                               else p.fraction,
+                    downloadedBytes = completedOffset + p.downloadedBytes,
+                    totalBytes = if (total > 0) total else p.totalBytes,
+                ))
+                is DownloadProgress.Failed -> emit(p)
+                is DownloadProgress.Complete -> {
+                    // UI tracks the main model file in its installed list.
+                    val main = File(context.getExternalFilesDir(null), entry.fileName)
+                    emit(DownloadProgress.Complete(main))
+                }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
     /** Cancel an in-progress download. */
     fun cancel() {
         cancelled.set(true)

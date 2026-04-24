@@ -1,5 +1,15 @@
 [
   {
+    "name": "Gemma 4 E2B (multimodal: text+image+audio)",
+    "fileName": "gemma-4-e2b-it-q4_k_m.gguf",
+    "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
+    "sizeBytes": 3340000000,
+    "description": "Google Gemma 4 E2B instruct, Q4_K_M. Multimodal: accepts text, images, and up to 30s of audio. Ships with a BF16 mmproj sidecar (~987MB, required for image/audio).",
+    "type": "llm",
+    "mmprojUrl": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-BF16.gguf",
+    "mmprojSizeBytes": 1034000000
+  },
+  {
     "name": "Home 3B v3 (Home Assistant)",
     "fileName": "home-3b-v3-q4_k_m.gguf",
     "url": "https://huggingface.co/acon96/Home-3B-v3-GGUF/resolve/main/Home-3B-v3.q4_k_m.gguf",
