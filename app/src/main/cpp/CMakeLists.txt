@@ -27,7 +27,13 @@ set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "" FORCE)
 # Help find_package(Vulkan) locate the C++ headers + glslc.
 # NDK 27 ships C headers in the sysroot but lacks vulkan.hpp. We vendor
 # the Khronos Vulkan-Headers under third_party/ for the C++ wrappers.
-set(Vulkan_INCLUDE_DIR "${CMAKE_CURRENT_LIST_DIR}/third_party/Vulkan-Headers/include" CACHE PATH "" FORCE)
+# llama.cpp (>= f65bc34) additionally #include's <spirv/unified1/spirv.hpp>;
+# that header isn't in Vulkan-Headers but the NDK ships it inside
+# shaderc/third_party/spirv-tools, so we pass both dirs as a semicolon
+# list to find_package(Vulkan) (CACHE STRING lets it be a list).
+set(Vulkan_INCLUDE_DIR
+    "${CMAKE_CURRENT_LIST_DIR}/third_party/Vulkan-Headers/include;${ANDROID_NDK}/sources/third_party/shaderc/third_party/spirv-tools/external/spirv-headers/include"
+    CACHE STRING "" FORCE)
 set(Vulkan_GLSLC_EXECUTABLE "${ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}/glslc" CACHE FILEPATH "" FORCE)
 
 # ARM-specific tuning. KleidiAI gives a meaningful boost on arm64-v8a (the only
@@ -39,6 +45,15 @@ endif()
 set(LLAMA_DIR ${CMAKE_CURRENT_LIST_DIR}/llama.cpp)
 add_subdirectory(${LLAMA_DIR} build-llama)
 
+# Pull in libmtmd without enabling LLAMA_BUILD_TOOLS (which would also
+# build llama-cli/server/bench/quantize/etc — wasted work for a JNI
+# bridge). Because mtmd/CMakeLists.txt references LLAMA_INSTALL_VERSION
+# and that's set in llama.cpp's subdirectory scope (not visible here),
+# we redeclare it in our scope so set_target_properties(mtmd VERSION ...)
+# gets a valid value.
+set(LLAMA_INSTALL_VERSION 0.0.0)
+add_subdirectory(${LLAMA_DIR}/tools/mtmd build-mtmd)
+
 add_library(llmbridge SHARED llm_bridge.cpp)
 
 target_include_directories(llmbridge PRIVATE
@@ -46,11 +61,13 @@ target_include_directories(llmbridge PRIVATE
     ${LLAMA_DIR}/include
     ${LLAMA_DIR}/common
     ${LLAMA_DIR}/ggml/include
+    ${LLAMA_DIR}/tools/mtmd
 )
 
 target_link_libraries(llmbridge
     llama
-    common
+    llama-common  # renamed from `common` in newer llama.cpp (post-Apr-2026)
+    mtmd
     android
     log
     vulkan

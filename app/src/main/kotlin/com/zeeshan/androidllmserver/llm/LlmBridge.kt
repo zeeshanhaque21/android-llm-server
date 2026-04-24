@@ -30,12 +30,38 @@ class LlmBridge {
         fun onToken(token: String)
     }
 
-    suspend fun load(modelPath: String, nCtx: Int = 2048, nThreads: Int = 4, useGpu: Boolean = false) {
+    /** bit0 = vision, bit1 = audio. 0 means text-only. Valid only after load(). */
+    @Volatile private var mmCapsBits: Int = 0
+
+    /** True if the currently loaded model has a vision encoder. */
+    val supportsVision: Boolean get() = (mmCapsBits and 0x1) != 0
+    /** True if the currently loaded model has an audio encoder. */
+    val supportsAudio:  Boolean get() = (mmCapsBits and 0x2) != 0
+    /** True if the currently loaded model can accept any non-text input. */
+    val supportsMultimodal: Boolean get() = mmCapsBits != 0
+
+    /**
+     * Load a text-only model, or a multimodal model when `mmprojPath` is
+     * non-null. Multimodal loading attaches a libmtmd context on the native
+     * side that decodes images and audio through the mmproj sidecar.
+     */
+    suspend fun load(
+        modelPath: String,
+        nCtx: Int = 2048,
+        nThreads: Int = 4,
+        useGpu: Boolean = false,
+        mmprojPath: String? = null,
+    ) {
         withContext(inferenceDispatcher) {
             check(handle.get() == 0L) { "model already loaded" }
-            val h = nativeInit(modelPath, nCtx, nThreads, useGpu)
-            check(h != 0L) { "nativeInit failed for $modelPath" }
+            val h = if (mmprojPath != null) {
+                nativeInitMm(modelPath, mmprojPath, nCtx, nThreads, useGpu)
+            } else {
+                nativeInit(modelPath, nCtx, nThreads, useGpu)
+            }
+            check(h != 0L) { "native init failed for $modelPath (mmproj=$mmprojPath)" }
             handle.set(h)
+            mmCapsBits = if (mmprojPath != null) nativeMmCaps(h) else 0
         }
     }
 
@@ -59,6 +85,35 @@ class LlmBridge {
         }
     }.flowOn(inferenceDispatcher)
 
+    /**
+     * Generate with interleaved media. The prompt must contain one
+     * `<__media__>` marker for each element of [media] in the order the
+     * HTTP/UI layer assembled them. Each media entry is the raw encoded
+     * bytes of an image (JPEG/PNG) or audio (MP3/WAV/FLAC) — libmtmd
+     * decodes them internally via stb_image / miniaudio.
+     *
+     * Only valid when the model was loaded with an mmproj path.
+     */
+    fun generateMultimodal(
+        prompt: String,
+        media: List<ByteArray>,
+        maxTokens: Int = 256,
+    ): Flow<String> = channelFlow {
+        val h = handle.get()
+        check(h != 0L) { "model not loaded" }
+        check(mmCapsBits != 0) {
+            "model was loaded without an mmproj — call load(...) with mmprojPath for multimodal"
+        }
+
+        val cb = TokenCallback { tok -> trySend(tok) }
+        try {
+            val n = nativeGenerateMm(h, prompt, media.toTypedArray(), maxTokens, cb)
+            if (n < 0) error("nativeGenerateMm returned $n")
+        } finally {
+            nativeCancel(h)
+        }
+    }.flowOn(inferenceDispatcher)
+
     suspend fun free() {
         withContext(inferenceDispatcher) {
             val h = handle.getAndSet(0L)
@@ -69,7 +124,10 @@ class LlmBridge {
     // --- JNI surface (keep names in sync with llm_bridge.cpp) ---------------
 
     private external fun nativeInit(modelPath: String, nCtx: Int, nThreads: Int, useGpu: Boolean): Long
+    private external fun nativeInitMm(modelPath: String, mmprojPath: String, nCtx: Int, nThreads: Int, useGpu: Boolean): Long
     private external fun nativeGenerate(handle: Long, prompt: String, nPredict: Int, cb: TokenCallback): Int
+    private external fun nativeGenerateMm(handle: Long, prompt: String, media: Array<ByteArray>, nPredict: Int, cb: TokenCallback): Int
+    private external fun nativeMmCaps(handle: Long): Int
     private external fun nativeCancel(handle: Long)
     private external fun nativeFree(handle: Long)
 
