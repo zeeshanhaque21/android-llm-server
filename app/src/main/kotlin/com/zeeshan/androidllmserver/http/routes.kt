@@ -37,15 +37,19 @@ fun Routing.installOpenAiRoutes(bridge: LlmBridge, modelName: String) {
 
     post("/v1/chat/completions") {
         val request = call.receive<ChatCompletionRequest>()
-        val prompt = formatChatPrompt(request.messages)
+        val (prompt, media) = buildPromptAndMedia(request.messages, modelName)
         val requestId = "chatcmpl-${UUID.randomUUID()}"
         val created = System.currentTimeMillis() / 1000
         val effectiveModel = request.model.ifBlank { modelName }
 
+        // Route: use multimodal path only when the bridge actually has an
+        // mmproj loaded AND the request carries media.
+        val useMm = media.isNotEmpty() && bridge.supportsMultimodal
+
         if (request.stream) {
-            handleStreaming(call, bridge, prompt, request, requestId, created, effectiveModel)
+            handleStreaming(call, bridge, prompt, media, useMm, request, requestId, created, effectiveModel)
         } else {
-            handleNonStreaming(call, bridge, prompt, request, requestId, created, effectiveModel)
+            handleNonStreaming(call, bridge, prompt, media, useMm, request, requestId, created, effectiveModel)
         }
     }
 }
@@ -56,12 +60,18 @@ private suspend fun handleNonStreaming(
     call: io.ktor.server.application.ApplicationCall,
     bridge: LlmBridge,
     prompt: String,
+    media: List<MediaPart>,
+    useMm: Boolean,
     request: ChatCompletionRequest,
     requestId: String,
     created: Long,
     model: String,
 ) {
-    val tokens = bridge.generate(prompt, request.maxTokens).toList()
+    val tokens = if (useMm) {
+        bridge.generateMultimodal(prompt, media.map { it.bytes() }, request.maxTokens).toList()
+    } else {
+        bridge.generate(prompt, request.maxTokens).toList()
+    }
     val fullText = tokens.joinToString("")
 
     // Token counts are approximations — llama.cpp doesn't expose prompt token
@@ -94,6 +104,8 @@ private suspend fun handleStreaming(
     call: io.ktor.server.application.ApplicationCall,
     bridge: LlmBridge,
     prompt: String,
+    media: List<MediaPart>,
+    useMm: Boolean,
     request: ChatCompletionRequest,
     requestId: String,
     created: Long,
@@ -116,7 +128,12 @@ private suspend fun handleStreaming(
 
         // Stream tokens
         try {
-            bridge.generate(prompt, request.maxTokens).collect { token ->
+            val flow = if (useMm) {
+                bridge.generateMultimodal(prompt, media.map { it.bytes() }, request.maxTokens)
+            } else {
+                bridge.generate(prompt, request.maxTokens)
+            }
+            flow.collect { token ->
                 val chunk = ChatCompletionChunk(
                     id = requestId,
                     created = created,
@@ -170,7 +187,20 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
     post("/api/chat") {
         val body = call.receiveText()
         val req = Json.decodeFromString<OllamaChatRequest>(body)
-        val prompt = formatChatPrompt(req.messages.map { ChatMessage(it.role, it.content) })
+
+        // Map Ollama messages into the same InboundMessage shape the OpenAI
+        // path uses so multimodal handling is identical.
+        val inbound = req.messages.map { m ->
+            val parts = mutableListOf<InboundPart>()
+            if (m.content.isNotEmpty()) parts.add(InboundPart.Text(m.content))
+            m.images?.forEach { b64 ->
+                val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                parts.add(InboundPart.Media(MediaPart.Image(bytes)))
+            }
+            InboundMessage(m.role, parts)
+        }
+        val (prompt, media) = buildPromptAndMedia(inbound, modelName)
+        val useMm = media.isNotEmpty() && bridge.supportsMultimodal
         val model = req.model.ifBlank { modelName }
         val stream = req.stream
 
@@ -178,7 +208,12 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
             call.response.header(HttpHeaders.CacheControl, "no-cache")
             call.respondTextWriter(contentType = ContentType.Application.Json) {
                 try {
-                    bridge.generate(prompt, 256).collect { token ->
+                    val flow = if (useMm) {
+                        bridge.generateMultimodal(prompt, media.map { it.bytes() }, 256)
+                    } else {
+                        bridge.generate(prompt, 256)
+                    }
+                    flow.collect { token ->
                         val chunk = OllamaChatResponse(
                             model = model,
                             message = OllamaChatMessage(role = "assistant", content = token),
@@ -200,7 +235,11 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
                 flush()
             }
         } else {
-            val tokens = bridge.generate(prompt, 256).toList()
+            val tokens = if (useMm) {
+                bridge.generateMultimodal(prompt, media.map { it.bytes() }, 256).toList()
+            } else {
+                bridge.generate(prompt, 256).toList()
+            }
             val fullText = tokens.joinToString("")
             call.respond(OllamaChatResponse(
                 model = model,
@@ -213,23 +252,58 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
 
 // ── Prompt formatting ───────────────────────────────────────────────────────
 
+private const val MEDIA_MARKER = "<__media__>"
+
 /**
- * Format chat messages into a ChatML prompt string.
- *
- * Uses the `<|im_start|>` / `<|im_end|>` template which is widely supported
- * by models quantized for chat (Qwen, Mistral-instruct, etc.).
+ * Extension that yields the raw encoded bytes of any [MediaPart] variant.
+ * libmtmd handles JPEG/PNG/WAV/MP3/FLAC byte-level decoding internally.
  */
-internal fun formatChatPrompt(messages: List<ChatMessage>): String {
+internal fun MediaPart.bytes(): ByteArray = when (this) {
+    is MediaPart.Image -> bytes
+    is MediaPart.Audio -> bytes
+}
+
+/**
+ * Build the prompt string and ordered media list for inference.
+ *
+ * Chooses a chat template based on the loaded model name:
+ *   - Gemma family ("gemma")      -> <start_of_turn>/<end_of_turn>
+ *   - Everything else             -> ChatML (<|im_start|>/<|im_end|>)
+ *
+ * Media placeholders are emitted inline with the user text so libmtmd's
+ * mtmd_tokenize can swap in image/audio token chunks at the right position.
+ */
+internal fun buildPromptAndMedia(
+    messages: List<InboundMessage>,
+    modelName: String,
+): Pair<String, List<MediaPart>> {
+    val useGemma = modelName.contains("gemma", ignoreCase = true)
+    val media = mutableListOf<MediaPart>()
     val sb = StringBuilder()
+
     for (msg in messages) {
+        // Interleave the message's parts so media markers sit exactly where
+        // the caller placed them between text chunks.
         val content = buildString {
-            if (msg.imageUrl != null) {
-                append("[Image provided]\n")
+            for (p in msg.parts) when (p) {
+                is InboundPart.Text  -> append(p.text)
+                is InboundPart.Media -> {
+                    append(MEDIA_MARKER)
+                    media.add(p.media)
+                }
             }
-            append(msg.content)
         }
-        sb.append("<|im_start|>${msg.role}\n$content<|im_end|>\n")
+
+        if (useGemma) {
+            // Gemma templates use "user" and "model" roles.
+            val role = if (msg.role == "assistant") "model" else msg.role
+            sb.append("<start_of_turn>$role\n$content<end_of_turn>\n")
+        } else {
+            sb.append("<|im_start|>${msg.role}\n$content<|im_end|>\n")
+        }
     }
-    sb.append("<|im_start|>assistant\n")
-    return sb.toString()
+
+    // Open the assistant turn.
+    sb.append(if (useGemma) "<start_of_turn>model\n" else "<|im_start|>assistant\n")
+    return sb.toString() to media
 }
