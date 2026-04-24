@@ -33,6 +33,8 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
@@ -92,12 +94,19 @@ data class ChatMsg(
     val imageBase64: String? = null,
 )
 
-private fun formatChatPrompt(messages: List<ChatMsg>): String {
+private fun formatChatPrompt(messages: List<ChatMsg>, modelName: String = ""): String {
+    val useGemma = modelName.contains("gemma", ignoreCase = true)
     val sb = StringBuilder()
     for (msg in messages) {
-        sb.append("<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n")
+        if (useGemma) {
+            // Gemma templates map "assistant" → "model" and use start/end_of_turn tokens.
+            val role = if (msg.role == "assistant") "model" else msg.role
+            sb.append("<start_of_turn>$role\n${msg.content}<end_of_turn>\n")
+        } else {
+            sb.append("<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n")
+        }
     }
-    sb.append("<|im_start|>assistant\n")
+    sb.append(if (useGemma) "<start_of_turn>model\n" else "<|im_start|>assistant\n")
     return sb.toString()
 }
 
@@ -119,22 +128,32 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     var showConfigDialog by remember { mutableStateOf(false) }
 
-    // Image attachment state
+    // Image attachment state. attachedImageBytes holds the re-encoded JPEG
+    // bytes we hand to libmtmd; attachedImageBase64 is the same bytes base64
+    // so the inline thumbnail can render without decoding twice.
     var attachedImageUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var attachedImageBase64 by remember { mutableStateOf<String?>(null) }
+    var attachedImageBytes by remember { mutableStateOf<ByteArray?>(null) }
+
+    // Audio attachment state. Format is sniffed from the filename extension;
+    // libmtmd also sniffs the byte magic internally so "wav" as a default is
+    // harmless when the ext is unknown.
+    var attachedAudioBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var attachedAudioName  by remember { mutableStateOf<String?>(null) }
+    var attachedAudioFormat by remember { mutableStateOf<String?>(null) }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri ->
         if (uri != null) {
             attachedImageUri = uri
-            // Convert to base64
             try {
                 val inputStream = context.contentResolver.openInputStream(uri)
                 val bytes = inputStream?.readBytes()
                 inputStream?.close()
                 if (bytes != null) {
-                    // Resize if too large (max 1MB for reasonable prompt size)
+                    // Resize if too large (max 1024 px longest side) to keep
+                    // the mmproj encode fast on mobile.
                     val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     if (bitmap != null) {
                         val maxDim = 1024
@@ -151,12 +170,39 @@ fun ChatScreen(
                         }
                         val baos = ByteArrayOutputStream()
                         scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos)
-                        attachedImageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                        val encoded = baos.toByteArray()
+                        attachedImageBytes = encoded
+                        attachedImageBase64 = Base64.encodeToString(encoded, Base64.NO_WRAP)
                     }
                 }
             } catch (_: Exception) {
                 attachedImageUri = null
                 attachedImageBase64 = null
+                attachedImageBytes = null
+            }
+        }
+    }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val displayName = uri.lastPathSegment ?: "audio"
+                val ext = displayName.substringAfterLast('.', "").lowercase()
+                if (bytes != null) {
+                    attachedAudioBytes  = bytes
+                    attachedAudioName   = displayName
+                    attachedAudioFormat = when (ext) {
+                        "mp3", "wav", "flac", "ogg", "m4a" -> ext
+                        else -> "wav"
+                    }
+                }
+            } catch (_: Exception) {
+                attachedAudioBytes = null
+                attachedAudioName  = null
+                attachedAudioFormat = null
             }
         }
     }
@@ -325,38 +371,81 @@ fun ChatScreen(
                 )
             }
 
-            // Image preview (above input card)
-            if (attachedImageBase64 != null) {
+            // Attachment preview (image thumb + audio chip) above input card
+            if (attachedImageBase64 != null || attachedAudioBytes != null) {
                 Row(
                     modifier = Modifier
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val previewBytes = Base64.decode(attachedImageBase64, Base64.DEFAULT)
-                    val previewBitmap = BitmapFactory.decodeByteArray(previewBytes, 0, previewBytes.size)
-                    if (previewBitmap != null) {
-                        Image(
-                            bitmap = previewBitmap.asImageBitmap(),
-                            contentDescription = "Attached image preview",
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop,
-                        )
+                    if (attachedImageBase64 != null) {
+                        val previewBytes = Base64.decode(attachedImageBase64, Base64.DEFAULT)
+                        val previewBitmap = BitmapFactory.decodeByteArray(previewBytes, 0, previewBytes.size)
+                        if (previewBitmap != null) {
+                            Image(
+                                bitmap = previewBitmap.asImageBitmap(),
+                                contentDescription = "Attached image preview",
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                attachedImageUri = null
+                                attachedImageBase64 = null
+                                attachedImageBytes = null
+                            },
+                            modifier = Modifier.size(24.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remove image",
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
                     }
-                    Spacer(Modifier.width(8.dp))
-                    IconButton(
-                        onClick = {
-                            attachedImageUri = null
-                            attachedImageBase64 = null
-                        },
-                        modifier = Modifier.size(24.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Remove image",
-                            modifier = Modifier.size(16.dp),
-                        )
+                    if (attachedAudioBytes != null) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Default.GraphicEq,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    attachedAudioName ?: "audio",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    modifier = Modifier.widthIn(max = 140.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                IconButton(
+                                    onClick = {
+                                        attachedAudioBytes = null
+                                        attachedAudioName = null
+                                        attachedAudioFormat = null
+                                    },
+                                    modifier = Modifier.size(20.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Remove audio",
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -405,7 +494,7 @@ fun ChatScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // "+" button — pick image from gallery
+                        // Attach image (gallery)
                         Surface(
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -422,10 +511,34 @@ fun ChatScreen(
                             }
                         }
 
+                        Spacer(Modifier.width(8.dp))
+
+                        // Attach audio (any audio/* MIME)
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            IconButton(
+                                onClick = { audioPickerLauncher.launch("audio/*") },
+                                modifier = Modifier.size(40.dp),
+                                enabled = bridge?.supportsAudio == true,
+                            ) {
+                                Icon(
+                                    Icons.Default.Mic,
+                                    contentDescription = if (bridge?.supportsAudio == true)
+                                        "Add audio" else "Audio not supported by this model",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+
                         Spacer(Modifier.weight(1f))
 
                         // Send button
-                        val canSend = !isGenerating && (inputText.isNotBlank() || attachedImageBase64 != null) && (bridge != null || sdBridge != null)
+                        val hasAnyAttachment = attachedImageBytes != null || attachedAudioBytes != null
+                        val canSend = !isGenerating &&
+                            (inputText.isNotBlank() || hasAnyAttachment) &&
+                            (bridge != null || sdBridge != null)
                         Surface(
                             shape = CircleShape,
                             color = if (canSend) {
@@ -437,35 +550,63 @@ fun ChatScreen(
                             IconButton(
                                 onClick = {
                                     val text = inputText.trim()
-                                    val imageB64 = attachedImageBase64
-                                    if (text.isEmpty() && imageB64 == null) return@IconButton
+                                    val imageB64   = attachedImageBase64
+                                    val imageBytes = attachedImageBytes
+                                    val audioBytes = attachedAudioBytes
+                                    val hasAttachments = imageBytes != null || audioBytes != null
+                                    if (text.isEmpty() && !hasAttachments) return@IconButton
                                     if (bridge == null && sdBridge == null) return@IconButton
 
-                                    // Build the user message content — prepend marker if image attached
-                                    val userContent = if (imageB64 != null) {
-                                        "[Image attached]\n$text"
-                                    } else {
-                                        text
+                                    // Stash the media bytes for the generate flow before clearing
+                                    // the composer state. The prompt gets one <__media__> marker
+                                    // per attached item so mtmd_tokenize interleaves the chunks.
+                                    val sendImageBytes = imageBytes
+                                    val sendAudioBytes = audioBytes
+
+                                    // User-visible content for the chat bubble (no <__media__>).
+                                    val userContent = buildString {
+                                        if (imageB64 != null)    append("[Image attached]\n")
+                                        if (audioBytes != null)  append("[Audio attached]\n")
+                                        append(text)
+                                    }
+                                    // Content that goes into the model prompt.
+                                    val promptUserContent = buildString {
+                                        if (sendImageBytes != null) append("<__media__>\n")
+                                        if (sendAudioBytes != null) append("<__media__>\n")
+                                        append(text)
                                     }
 
-                                    // Add user message (with image if present)
                                     messages.add(ChatMsg(role = "user", content = userContent, imageBase64 = imageB64))
                                     inputText = ""
                                     attachedImageUri = null
                                     attachedImageBase64 = null
+                                    attachedImageBytes = null
+                                    attachedAudioBytes = null
+                                    attachedAudioName = null
+                                    attachedAudioFormat = null
                                     isGenerating = true
 
-                                    // Build prompt from all messages, prepending a system message
                                     val systemContent = if (configEnableThinking) {
                                         "You are a helpful assistant. Think step by step before answering. Wrap your reasoning in <think></think> tags."
                                     } else {
                                         "You are a helpful assistant."
                                     }
+                                    // Rebuild: system + all prior chat + override the last user
+                                    // message with the marker-carrying promptUserContent.
+                                    val historyMinusLastUser =
+                                        messages.dropLast(1).filter { it.role == "user" || it.role == "assistant" }
                                     val promptMessages = buildList {
                                         add(ChatMsg(role = "system", content = systemContent))
-                                        addAll(messages.filter { it.role == "user" || it.role == "assistant" })
+                                        addAll(historyMinusLastUser)
+                                        add(ChatMsg(role = "user", content = promptUserContent))
                                     }
-                                    val prompt = formatChatPrompt(promptMessages)
+                                    val prompt = formatChatPrompt(promptMessages, modelName)
+
+                                    // Collect media bytes in the same order as the markers above.
+                                    val mediaBytes = buildList<ByteArray> {
+                                        if (sendImageBytes != null) add(sendImageBytes)
+                                        if (sendAudioBytes != null) add(sendAudioBytes)
+                                    }
 
                                     // Add empty assistant message for streaming
                                     messages.add(ChatMsg(role = "assistant", content = "", isStreaming = true))
@@ -510,7 +651,12 @@ fun ChatScreen(
                                             // Raw accumulator to detect tags that span tokens
                                             val rawBuf = StringBuilder()
 
-                                            bridge.generate(prompt, maxTokens = configMaxTokens).collect { token ->
+                                            val tokenFlow = if (mediaBytes.isNotEmpty() && bridge.supportsMultimodal) {
+                                                bridge.generateMultimodal(prompt, mediaBytes, maxTokens = configMaxTokens)
+                                            } else {
+                                                bridge.generate(prompt, maxTokens = configMaxTokens)
+                                            }
+                                            tokenFlow.collect { token ->
                                                 rawBuf.append(token)
                                                 val raw = rawBuf.toString()
 

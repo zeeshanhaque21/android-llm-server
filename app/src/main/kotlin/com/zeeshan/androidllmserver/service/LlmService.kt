@@ -143,10 +143,20 @@ class LlmService : Service() {
                 } else {
                     LlmBridge.ensureNativeLoaded()
                     val b = LlmBridge()
-                    b.load(modelPath, nCtx = serverPrefs.nCtx, nThreads = serverPrefs.nThreads, useGpu = serverPrefs.useGpu)
+                    // Attach mmproj sidecar if one was co-downloaded. Convention:
+                    // "<modelFile>.mmproj.gguf" next to the main GGUF, written by
+                    // ModelDownloadManager.downloadEntry().
+                    val mmproj = java.io.File("$modelPath.mmproj.gguf").takeIf { it.exists() }?.absolutePath
+                    b.load(
+                        modelPath,
+                        nCtx = serverPrefs.nCtx,
+                        nThreads = serverPrefs.nThreads,
+                        useGpu = serverPrefs.useGpu,
+                        mmprojPath = mmproj,
+                    )
                     bridge = b
                     sdBridge = null
-                    Log.i(TAG, "LLM model loaded: $modelPath")
+                    Log.i(TAG, "LLM model loaded: $modelPath${if (mmproj != null) " + mmproj" else ""}")
                 }
                 serverPrefs.lastModelPath = modelPath
             } catch (e: Exception) {
