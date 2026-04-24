@@ -35,6 +35,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
@@ -80,8 +83,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.zeeshan.androidllmserver.audio.AudioRecorder
 import com.zeeshan.androidllmserver.llm.LlmBridge
 import com.zeeshan.androidllmserver.prefs.ServerPreferences
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
@@ -205,6 +210,77 @@ fun ChatScreen(
                 attachedAudioFormat = null
             }
         }
+    }
+
+    // Live-recording state for the in-composer mic button. We keep a single
+    // AudioRecorder tied to the composable's remembered lifetime so concurrent
+    // taps can't spawn two concurrent recorders.
+    val audioRecorder = remember { AudioRecorder() }
+    var isRecordingAudio by remember { mutableStateOf(false) }
+    var recordingSeconds by remember { mutableIntStateOf(0) }
+
+    val recordPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            // User just said yes; start recording immediately so the tap
+            // that triggered the prompt isn't wasted.
+            audioRecorder.start()
+            isRecordingAudio = audioRecorder.isRecording
+            recordingSeconds = 0
+        }
+    }
+
+    fun toggleAudioRecording() {
+        if (isRecordingAudio) {
+            val wav = audioRecorder.stop()
+            isRecordingAudio = false
+            if (wav.isNotEmpty()) {
+                attachedAudioBytes  = wav
+                attachedAudioName   = "recorded-${recordingSeconds}s.wav"
+                attachedAudioFormat = "wav"
+            }
+            recordingSeconds = 0
+            return
+        }
+        // Not recording yet — check permission, start or request.
+        val granted = android.content.pm.PackageManager.PERMISSION_GRANTED ==
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECORD_AUDIO
+            )
+        if (!granted) {
+            recordPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        audioRecorder.start()
+        isRecordingAudio = audioRecorder.isRecording
+        recordingSeconds = 0
+    }
+
+    // Drive the MM:SS counter while recording. Auto-stops at 30 s to match
+    // the upstream mtmd audio cap; past 30 s libmtmd rejects the blob.
+    LaunchedEffect(isRecordingAudio) {
+        while (isRecordingAudio) {
+            delay(1000L)
+            recordingSeconds += 1
+            if (recordingSeconds >= 30) {
+                // Auto-stop and attach.
+                val wav = audioRecorder.stop()
+                isRecordingAudio = false
+                if (wav.isNotEmpty()) {
+                    attachedAudioBytes  = wav
+                    attachedAudioName   = "recorded-30s.wav"
+                    attachedAudioFormat = "wav"
+                }
+                recordingSeconds = 0
+            }
+        }
+    }
+
+    // Cancel any in-flight recording when the screen leaves composition so
+    // we don't leak a dangling MediaRecorder hold on the mic.
+    DisposableEffect(Unit) {
+        onDispose { audioRecorder.cancel() }
     }
 
     // Local config state
@@ -513,23 +589,41 @@ fun ChatScreen(
 
                         Spacer(Modifier.width(8.dp))
 
-                        // Attach audio (any audio/* MIME)
+                        // Record audio (live mic). Long-press/secondary flow
+                        // is intentionally omitted — users who want to attach
+                        // an existing audio file can POST one to the HTTP API.
+                        val audioSupported = bridge?.supportsAudio == true
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (isRecordingAudio) MaterialTheme.colorScheme.errorContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant,
                         ) {
                             IconButton(
-                                onClick = { audioPickerLauncher.launch("audio/*") },
+                                onClick = { toggleAudioRecording() },
                                 modifier = Modifier.size(40.dp),
-                                enabled = bridge?.supportsAudio == true,
+                                enabled = audioSupported,
                             ) {
                                 Icon(
-                                    Icons.Default.Mic,
-                                    contentDescription = if (bridge?.supportsAudio == true)
-                                        "Add audio" else "Audio not supported by this model",
+                                    if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic,
+                                    contentDescription = when {
+                                        !audioSupported   -> "Audio not supported by this model"
+                                        isRecordingAudio  -> "Stop recording"
+                                        else              -> "Record audio"
+                                    },
+                                    tint = if (isRecordingAudio) MaterialTheme.colorScheme.error
+                                           else LocalContentColor.current,
                                     modifier = Modifier.size(20.dp),
                                 )
                             }
+                        }
+
+                        if (isRecordingAudio) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "●  %02d:%02d".format(recordingSeconds / 60, recordingSeconds % 60),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
                         }
 
                         Spacer(Modifier.weight(1f))
