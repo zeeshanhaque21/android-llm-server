@@ -30,6 +30,17 @@ android {
     namespace = "com.zeeshan.androidllmserver"
     compileSdk = 35
 
+    // Name release/debug APKs after the project so GitHub release downloads
+    // show "android-llm-server-v0.2.0.apk" instead of the default
+    // "app-release.apk".
+    applicationVariants.all {
+        val variant = this
+        variant.outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            output.outputFileName = "android-llm-server-v${variant.versionName}-${variant.buildType.name}.apk"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.zeeshan.androidllmserver"
         minSdk = 29

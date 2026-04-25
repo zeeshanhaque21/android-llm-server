@@ -4,14 +4,16 @@
 
 APP_ID        := com.zeeshan.androidllmserver
 MAIN_ACTIVITY := $(APP_ID)/.MainActivity
-DEBUG_APK     := app/build/outputs/apk/debug/app-debug.apk
+DEBUG_DIR     := app/build/outputs/apk/debug
 RELEASE_DIR   := app/build/outputs/apk/release
 GRADLE        := ./gradlew
 
-# Pick whichever release APK Gradle produced: signed if the build.gradle
-# keystore config resolved, otherwise the "-unsigned" variant that GitHub
-# Releases accepts but devices refuse to install.
-release_apk = $(firstword $(wildcard $(RELEASE_DIR)/app-release.apk $(RELEASE_DIR)/app-release-unsigned.apk))
+# APK filenames follow android-llm-server-v<version>-<buildType>.apk
+# (set by applicationVariants.all in app/build.gradle.kts). We glob to be
+# resilient to version bumps and to fall back to the default app-* names
+# in case someone tweaks the variant config.
+debug_apk   = $(firstword $(wildcard $(DEBUG_DIR)/android-llm-server-*-debug.apk $(DEBUG_DIR)/app-debug.apk))
+release_apk = $(firstword $(wildcard $(RELEASE_DIR)/android-llm-server-*-release.apk $(RELEASE_DIR)/app-release.apk $(RELEASE_DIR)/app-release-unsigned.apk))
 
 # Gradle 8.10 refuses to launch on JDK 24+, and this project targets
 # Java 17 bytecode. If the caller didn't set JAVA_HOME, scan the usual
@@ -113,7 +115,7 @@ devices:
 	adb devices -l
 
 install: build
-	adb install -r $(DEBUG_APK)
+	adb install -r $(debug_apk)
 
 install-release: release
 	adb install -r $(release_apk)
@@ -134,7 +136,7 @@ logcat:
 # ---------- publishing ----------
 
 apk-info:
-	@ls -lh $(DEBUG_APK) $(release_apk) 2>/dev/null || true
+	@ls -lh $(debug_apk) $(release_apk) 2>/dev/null || true
 	@echo "versionName: $(VERSION)"
 	@echo "tag:         $(TAG)"
 	@echo "gh repo:     $(GH_REPO)"
