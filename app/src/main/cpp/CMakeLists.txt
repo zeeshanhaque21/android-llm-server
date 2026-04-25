@@ -17,11 +17,18 @@ set(LLAMA_BUILD_COMMON   ON  CACHE BOOL "" FORCE)
 set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP          OFF CACHE BOOL "" FORCE)
 
-# Vulkan GPU backend — Adreno 640 (Note 10+) supports Vulkan 1.1.
-# The NDK ships Vulkan C headers in the sysroot but the C++ wrapper
-# (vulkan.hpp) lives under sources/third_party/vulkan. We point
-# Vulkan_INCLUDE_DIR there so find_package(Vulkan) picks up both.
-set(GGML_VULKAN          ON  CACHE BOOL "" FORCE)
+# Vulkan GPU backend — DISABLED.
+#
+# Worked on Adreno 640 (Note 10+) with the older llama.cpp pin, but the
+# current submodule (f65bc34, 2026-04-24) crashes deterministically on
+# Adreno 740 (S23 Ultra) inside vkCmdBindPipeline with a null pipeline
+# handle, on every llama_decode — multimodal AND text-only. Rather than
+# ship a build that segfaults on every modern Snapdragon, we disable
+# Vulkan and lean on the CPU path (KleidiAI ARM kernels, see below).
+#
+# The ARM CPU path benchmarks acceptably for Q4 1B-3B models; revisit
+# Vulkan when ggml-vulkan stabilises against current Adreno drivers.
+set(GGML_VULKAN          OFF CACHE BOOL "" FORCE)
 set(GGML_VULKAN_CHECK_RESULTS OFF CACHE BOOL "" FORCE)
 
 # Help find_package(Vulkan) locate the C++ headers + glslc.
@@ -70,7 +77,9 @@ target_link_libraries(llmbridge
     mtmd
     android
     log
-    vulkan
+    # `vulkan` link removed alongside GGML_VULKAN=OFF above — keeping it
+    # would leave an unused NEEDED entry on libllmbridge.so. Re-add when
+    # the Adreno crash is solved upstream and Vulkan is turned back on.
 )
 
 # --- stable-diffusion.cpp (image generation) ---
