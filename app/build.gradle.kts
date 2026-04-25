@@ -34,8 +34,8 @@ android {
         applicationId = "com.zeeshan.androidllmserver"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         ndk {
             // arm64 only. We don't use emulators (see CLAUDE.md testing
