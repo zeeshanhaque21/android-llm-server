@@ -111,6 +111,17 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/{INDEX.LIST,io.netty.versions.properties}"
         }
+        jniLibs {
+            // libOpenCL.so is a build-time-only stub from
+            // third_party/opencl-stub — used solely so the linker can
+            // resolve clCreateContext et al. when building
+            // libggml-opencl.so. The Android dynamic linker, given the
+            // <uses-native-library> manifest entry, supplies the real
+            // driver from /vendor/lib64/libOpenCL.so at load time.
+            // Shipping our stub would shadow the real driver and turn
+            // every OpenCL call into a no-op.
+            excludes += "**/libOpenCL.so"
+        }
     }
 }
 

@@ -35,5 +35,10 @@ app/src/main/assets/models/
 keystore.properties
 *.jks
 *.keystore
-# Vendored Vulkan headers (download with setup script)
-app/src/main/cpp/third_party/
+# Vendored third-party headers/stubs.
+# Default: ignore so each dev pulls fresh; whitelist the ones the build
+# genuinely needs cloneable (OpenCL deps, since we generate the stub
+# rather than vendor a binary).
+app/src/main/cpp/third_party/*
+!app/src/main/cpp/third_party/OpenCL-Headers/
+!app/src/main/cpp/third_party/opencl-stub/
