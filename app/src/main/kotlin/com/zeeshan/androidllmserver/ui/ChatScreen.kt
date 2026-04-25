@@ -103,12 +103,17 @@ private fun formatChatPrompt(messages: List<ChatMsg>, modelName: String = ""): S
     val useGemma = modelName.contains("gemma", ignoreCase = true)
     val sb = StringBuilder()
     for (msg in messages) {
+        // Strip any echoed template tokens from prior assistant turns so the
+        // next prompt doesn't end up with nested <end_of_turn> / <|im_end|>
+        // sequences that confuse the model.
+        val safeContent =
+            if (msg.role == "assistant") sanitizeAssistantText(msg.content) else msg.content
         if (useGemma) {
             // Gemma templates map "assistant" → "model" and use start/end_of_turn tokens.
             val role = if (msg.role == "assistant") "model" else msg.role
-            sb.append("<start_of_turn>$role\n${msg.content}<end_of_turn>\n")
+            sb.append("<start_of_turn>$role\n$safeContent<end_of_turn>\n")
         } else {
-            sb.append("<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n")
+            sb.append("<|im_start|>${msg.role}\n$safeContent<|im_end|>\n")
         }
     }
     sb.append(if (useGemma) "<start_of_turn>model\n" else "<|im_start|>assistant\n")
@@ -1008,11 +1013,10 @@ private fun MessageBubble(msg: ChatMsg) {
                 }
 
                 // Main content (skip if content is a data:image URI — already rendered above)
-                // Strip any residual think tags that leaked through the parser
-                val cleanContent = msg.content
-                    .replace("<think>", "")
-                    .replace("</think>", "")
-                    .trimStart()
+                // Strip residual chat-template / mtmd tags that the model
+                // sometimes parrots into its output, plus any leftover think
+                // tags that leaked through the streaming parser.
+                val cleanContent = sanitizeAssistantText(msg.content)
                 val isImageContent = !isUser && !isSystem && cleanContent.startsWith("data:image/")
                 val displayText = if (isImageContent) {
                     ""
@@ -1025,15 +1029,27 @@ private fun MessageBubble(msg: ChatMsg) {
                 }
 
                 if (displayText.isNotEmpty()) {
-                    Text(
-                        text = displayText,
-                        color = when {
-                            isUser -> MaterialTheme.colorScheme.onPrimary
-                            isSystem -> MaterialTheme.colorScheme.onErrorContainer
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                    val textColor = when {
+                        isUser -> MaterialTheme.colorScheme.onPrimary
+                        isSystem -> MaterialTheme.colorScheme.onErrorContainer
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    // System and user bubbles render verbatim; assistant
+                    // output gets a basic markdown pass so **bold**, code
+                    // fences, and lists actually look right.
+                    if (isUser || isSystem) {
+                        Text(
+                            text = displayText,
+                            color = textColor,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    } else {
+                        MarkdownText(
+                            text = displayText,
+                            color = textColor,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                 }
             }
         }
