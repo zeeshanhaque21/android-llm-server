@@ -841,17 +841,31 @@ fun ChatScreen(
                                                 isStreaming = false,
                                             )
                                           } // end else if (bridge != null)
-                                        } catch (e: Exception) {
-                                            // Show error as system message
+                                        } catch (e: Throwable) {
+                                            // Surface enough context for the user to diagnose
+                                            // without needing adb logcat. Native SIGSEGV won't
+                                            // hit this branch (the process dies first), but any
+                                            // Kotlin- or JNI-thrown error lands here.
+                                            val mmInfo = if (bridge != null) {
+                                                "vision=${bridge.supportsVision} audio=${bridge.supportsAudio}"
+                                            } else "no bridge"
+                                            val mediaInfo = "media=${mediaBytes.size}"
+                                            val trace = e.stackTraceToString().lines().take(8).joinToString("\n")
+                                            val errText = buildString {
+                                                append("⚠️ ${e::class.simpleName}: ${e.message}\n\n")
+                                                append("$mmInfo, $mediaInfo, model=$modelName\n\n")
+                                                append(trace)
+                                            }
                                             val current = messages[assistantIndex]
                                             if (current.content.isEmpty()) {
                                                 messages[assistantIndex] = current.copy(
-                                                    content = "Error: ${e.message}",
+                                                    content = errText,
                                                     isStreaming = false,
                                                 )
                                             } else {
-                                                messages.add(ChatMsg(role = "system", content = "Error: ${e.message}"))
+                                                messages.add(ChatMsg(role = "system", content = errText))
                                             }
+                                            android.util.Log.e("ChatScreen", "send failed", e)
                                         } finally {
                                             isGenerating = false
                                         }
