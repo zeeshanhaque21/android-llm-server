@@ -41,7 +41,7 @@ GH_REPO ?= $(shell git config --get remote.origin.url 2>/dev/null | sed -E 's#.*
 
 .PHONY: help setup submodules build debug release install install-release run \
         logcat stop uninstall clean distclean lint test tag publish publish-draft \
-        apk-info devices
+        apk-info devices convert-model convert-setup
 
 help:
 	@echo "android-llm-server — make targets"
@@ -63,6 +63,11 @@ help:
 	@echo "  stop           Force-stop the running app"
 	@echo "  uninstall      Remove the app from the connected device"
 	@echo "  logcat         Tail logcat for $(APP_ID)"
+	@echo ""
+	@echo "  convert-setup  Create venv + install ai-edge-torch / litert-lm-builder deps"
+	@echo "  convert-model  Convert HF or GGUF -> .litertlm. Usage:"
+	@echo "                   make convert-model HF=meta-llama/Llama-3.2-1B-Instruct OUT=~/llama.litertlm"
+	@echo "                   make convert-model GGUF=~/qwen.gguf OUT=~/qwen.litertlm"
 	@echo ""
 	@echo "  tag            Create git tag $(TAG) at HEAD"
 	@echo "  publish        Build release APK and upload to GitHub release $(TAG)"
@@ -132,6 +137,44 @@ uninstall:
 logcat:
 	@echo "Tailing logcat for $(APP_ID) — Ctrl-C to stop"
 	adb logcat --pid=$$(adb shell pidof -s $(APP_ID))
+
+# ---------- model conversion (HF / GGUF -> .litertlm) ----------
+# These targets are independent of the Android build. They drive
+# scripts/convert_to_litertlm.py to produce a .litertlm file you can
+# sideload into the app. Conversion runs entirely on your laptop —
+# the toolchain is too heavy for on-device.
+
+# Override on the command line: HF=<repo> OR GGUF=<path>; OUT=<file>.
+HF    ?=
+GGUF  ?=
+OUT   ?=
+ARCH  ?=
+VARIANT ?=
+QUANT ?= dynamic_int8
+CONVERT_VENV ?= $(HOME)/.venvs/litertlm-convert
+
+convert-setup:
+	@if [ ! -d "$(CONVERT_VENV)" ]; then \
+	  echo "[convert] creating venv at $(CONVERT_VENV)"; \
+	  python3 -m venv "$(CONVERT_VENV)"; \
+	fi
+	@. "$(CONVERT_VENV)/bin/activate" && \
+	  pip install --upgrade pip && \
+	  pip install -r scripts/convert_to_litertlm.requirements.txt
+	@echo "[convert] activate the venv with:  source $(CONVERT_VENV)/bin/activate"
+
+convert-model:
+	@test -n "$(OUT)" || (echo "OUT=<path/to/output.litertlm> is required" && exit 1)
+	@test -n "$(HF)$(GGUF)" || (echo "Pass either HF=<repo> or GGUF=<path>" && exit 1)
+	@if [ ! -d "$(CONVERT_VENV)" ]; then \
+	  echo "[convert] venv missing — run 'make convert-setup' first"; exit 1; \
+	fi
+	@SRC=$$(if [ -n "$(HF)" ]; then echo "--hf $(HF)"; else echo "--gguf $(GGUF)"; fi); \
+	 ARGS=""; \
+	 [ -n "$(ARCH)" ]    && ARGS="$$ARGS --arch $(ARCH)"; \
+	 [ -n "$(VARIANT)" ] && ARGS="$$ARGS --variant $(VARIANT)"; \
+	 . "$(CONVERT_VENV)/bin/activate" && \
+	 python3 scripts/convert_to_litertlm.py $$SRC --out $(OUT) --quantize $(QUANT) $$ARGS
 
 # ---------- publishing ----------
 

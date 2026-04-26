@@ -93,6 +93,37 @@ curl http://<phone-ip>:8080/v1/chat/completions \
   }'
 ```
 
+## Convert your own model to `.litertlm`
+
+The Adreno-tuned OpenCL kernels that LiteRT-LM uses only run against `.litertlm` files. To target the GPU path on your Snapdragon device with a model that isn't in our catalog, convert it on your laptop:
+
+```bash
+# One-time: install ai-edge-torch + litert-lm-builder + transformers
+make convert-setup
+
+# Convert directly from a HuggingFace repo (preferred)
+make convert-model \
+  HF=meta-llama/Llama-3.2-1B-Instruct \
+  OUT=~/llama32-1b.litertlm
+
+# Or from a local GGUF — its metadata identifies the source HF repo
+make convert-model \
+  GGUF=~/models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+  OUT=~/qwen.litertlm
+
+# Sideload to the phone
+adb push ~/llama32-1b.litertlm /sdcard/Download/
+```
+
+Then in the app: Models → "+ from URL" → point at the file path; load it; Chat picks the LiteRT-LM engine automatically based on the `.litertlm` extension and routes through the Adreno OpenCL kernels.
+
+**Caveats:**
+
+- Only architecture families that ai-edge-torch's [Generative API](https://github.com/google-ai-edge/litert-torch/tree/main/litert_torch/generative/examples) supports work — currently `gemma`, `gemma3`, `llama`, `phi`, `qwen`, `qwen_vl`, `smollm`, `tiny_llama`, `falcon`, `openelm`, `deepseek`. Random fine-tunes of unsupported architectures won't convert.
+- GGUF inputs don't get dequantized — we read the embedded metadata to find the original HuggingFace repo and pull THAT. If your GGUF lacks `general.source.huggingface.repository` (or similar) metadata, pass `--hf <repo>` directly.
+- Conversion is a desktop workflow. Needs ~16 GB RAM, ~10–30 minutes per model, multi-GB Python deps (PyTorch, transformers, ai-edge-torch). Not feasible on phone.
+- The script defaults to `dynamic_int8` quantization; override with `QUANT=fp16`/`weight_only_int8` etc. for different size/quality trade-offs.
+
 ## Home Assistant integration
 
 Point the **Ollama** integration at `http://<phone-ip>:8080` with the bearer token. The `Home-3B-v3` and `Home-1B-v3` models in the catalog are fine-tuned for HA device control.

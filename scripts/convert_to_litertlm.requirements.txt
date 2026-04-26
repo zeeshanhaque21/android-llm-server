@@ -1,0 +1,17 @@
+# Pinned-loose deps for scripts/convert_to_litertlm.py.
+# Install into a venv before running the converter:
+#   python3 -m venv ~/.venvs/litertlm-convert
+#   source ~/.venvs/litertlm-convert/bin/activate
+#   pip install -r scripts/convert_to_litertlm.requirements.txt
+#
+# These are heavy (multi-GB once torch + transformers land). The script runs
+# CPU-only; a GPU is not required for conversion.
+
+ai-edge-torch>=0.4
+litert-lm-builder>=0.1
+huggingface_hub>=0.25
+transformers>=4.45
+sentencepiece>=0.2
+# torch is pulled in transitively by ai-edge-torch; pinning it explicitly
+# avoids a surprise upgrade if their lower bound moves.
+torch>=2.4,<2.6
