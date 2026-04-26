@@ -241,6 +241,82 @@ def run_tflite_conversion(arch: str, variant: str, checkpoint_dir: Path,
     return produced
 
 
+def build_llm_metadata(checkpoint_dir: Path, arch: str, max_num_tokens: int,
+                       out_pb: Path) -> None:
+    """Auto-generate the LlmMetadata proto from an HF checkpoint.
+
+    Without this section the LiteRT-LM Engine ctor fails with "bad
+    optional access" — it needs at minimum BOS/EOS tokens, the chat
+    template (jinja form is fine), context length, and a model-type
+    tag. We pull all of those from tokenizer_config.json + config.json
+    in the local HF mirror and write a binary protobuf the
+    litert_lm_builder CLI's `llm_metadata --path …` will accept.
+    """
+    # Imports here so the rest of the script doesn't fail when run
+    # outside the venv (e.g. from --help in CI).
+    import json
+    from litert_lm_builder.runtime.proto import llm_metadata_pb2 as md_pb
+    from litert_lm_builder.runtime.proto import llm_model_type_pb2 as mt_pb
+    from litert_lm_builder.runtime.proto import sampler_params_pb2 as sp_pb
+
+    tok_cfg = json.loads((checkpoint_dir / "tokenizer_config.json").read_text())
+    model_cfg = json.loads((checkpoint_dir / "config.json").read_text())
+
+    md = md_pb.LlmMetadata()
+
+    # BOS / EOS — accept either a plain string or an `added_token` dict.
+    def token_str(v):
+        if isinstance(v, dict):
+            return v.get("content")
+        return v
+    bos = token_str(tok_cfg.get("bos_token") or model_cfg.get("bos_token_id"))
+    if isinstance(bos, str):
+        md.start_token.token_str = bos
+    elif isinstance(bos, int):
+        md.start_token.token_ids.ids.append(bos)
+
+    eos_vals = tok_cfg.get("eos_token") or model_cfg.get("eos_token_id")
+    eos_list = eos_vals if isinstance(eos_vals, list) else [eos_vals]
+    seen_eos = set()
+    for e in eos_list:
+        s = token_str(e)
+        if isinstance(s, str) and s not in seen_eos:
+            md.stop_tokens.add().token_str = s
+            seen_eos.add(s)
+        elif isinstance(s, int) and s not in seen_eos:
+            md.stop_tokens.add().token_ids.ids.append(s)
+            seen_eos.add(s)
+
+    # Chat template — Jinja form straight from tokenizer_config.json.
+    chat_tpl = tok_cfg.get("chat_template")
+    if chat_tpl:
+        md.jinja_prompt_template = chat_tpl
+
+    md.max_num_tokens = max_num_tokens
+
+    # Map our arch / model_type to the right oneof in LlmModelType.
+    # Anything we don't have an explicit case for falls through to GenericModel.
+    mt = model_cfg.get("model_type", "").lower()
+    if arch == "qwen" and mt in ("qwen2", "qwen2.5"):
+        md.llm_model_type.CopyFrom(mt_pb.LlmModelType(qwen2p5=mt_pb.Qwen2p5()))
+    elif arch == "qwen" and mt == "qwen3":
+        md.llm_model_type.CopyFrom(mt_pb.LlmModelType(qwen3=mt_pb.Qwen3()))
+    elif arch == "gemma3":
+        md.llm_model_type.CopyFrom(mt_pb.LlmModelType(gemma3=mt_pb.Gemma3()))
+    elif arch == "gemma":
+        md.llm_model_type.CopyFrom(mt_pb.LlmModelType(generic_model=mt_pb.GenericModel()))
+    else:
+        md.llm_model_type.CopyFrom(mt_pb.LlmModelType(generic_model=mt_pb.GenericModel()))
+
+    # Reasonable defaults — engines accept anything here, callers override.
+    md.sampler_params.type = sp_pb.SamplerParameters.TOP_P
+    md.sampler_params.k = 40
+    md.sampler_params.p = 0.95
+    md.sampler_params.temperature = 1.0
+
+    out_pb.write_bytes(md.SerializeToString())
+
+
 def find_tokenizer(checkpoint_dir: Path) -> tuple[Path, str]:
     """Find the tokenizer in an HF checkpoint.
 
@@ -265,13 +341,23 @@ def find_tokenizer(checkpoint_dir: Path) -> tuple[Path, str]:
 
 def run_litertlm_bundle(tflite_files: list[Path], tokenizer: Path,
                         tokenizer_kind: str,
+                        llm_metadata_pb: Path | None,
                         out_path: Path, model_label: str) -> None:
-    """Bundle .tflite + tokenizer into a .litertlm file via litert-lm-builder."""
+    """Bundle .tflite + tokenizer (+ optional llm_metadata) into a .litertlm.
+
+    The LiteRT-LM Engine ctor reads `llm_metadata` to discover BOS/EOS,
+    chat template, and context length. Without it Engine crashes with
+    "bad optional access" on the very first inference call. Pre-built
+    .litertlm files from Google always include this section; ours
+    didn't, until we started auto-generating it from the HF checkpoint.
+    """
     cmd = [
         sys.executable, "-m", "litert_lm_builder.litertlm_builder_cli",
         "system_metadata", "--str", "Authors", "android-llm-server convert_to_litertlm.py",
         "system_metadata", "--str", "Source", model_label,
     ]
+    if llm_metadata_pb:
+        cmd += ["llm_metadata", "--path", str(llm_metadata_pb)]
     # The converter typically emits one prefill_decode .tflite. If multiple
     # variants land (e.g. embedder + prefill_decode) we wire them in order.
     for tf in tflite_files:
@@ -377,8 +463,17 @@ def main(argv: list[str]) -> int:
         )
 
         tokenizer, tokenizer_kind = find_tokenizer(ckpt_dir)
+
+        llm_meta_pb = workdir / "llm_metadata.pb"
+        try:
+            build_llm_metadata(ckpt_dir, args.arch, args.kv_cache_max_len, llm_meta_pb)
+            log(f"built llm_metadata: {llm_meta_pb} ({llm_meta_pb.stat().st_size} bytes)")
+        except Exception as e:  # noqa: BLE001
+            log(f"WARNING: could not build llm_metadata ({e}); bundling without")
+            llm_meta_pb = None
+
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        run_litertlm_bundle(tflite_files, tokenizer, tokenizer_kind, args.out,
+        run_litertlm_bundle(tflite_files, tokenizer, tokenizer_kind, llm_meta_pb, args.out,
                             model_label=f"{repo} ({args.arch}/{args.variant}, {args.quantize})")
         log(f"DONE. wrote {args.out} ({args.out.stat().st_size / 1e6:.1f} MB)")
         log("Push to phone with:  adb push "
