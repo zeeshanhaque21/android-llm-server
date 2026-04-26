@@ -69,8 +69,18 @@ ARCH_TABLE: dict[str, dict] = {
     "deepseek":  {"module": "litert_torch.generative.examples.deepseek.convert_to_tflite",  "variants": ["1.5b"]},
 }
 
-# Common quantizations supported by ai-edge-torch's Generative API.
-QUANTIZE_CHOICES = ["dynamic_int8", "weight_only_int8", "fp16", "none"]
+# Quantization recipes recognised by ai-edge-torch's converter. INT4
+# variants are 4x smaller than INT8 and the smallest sensible default
+# for on-device inference on a phone — quality drops are usually
+# imperceptible on 1B–3B chat models.
+QUANTIZE_CHOICES = [
+    "dynamic_int4_block128",  # smallest, recommended for phones
+    "dynamic_int4_block32",   # slightly larger, marginally better quality
+    "dynamic_int8",
+    "weight_only_int8",
+    "fp16",
+    "none",
+]
 
 
 def log(msg: str) -> None:
@@ -213,8 +223,13 @@ def run_tflite_conversion(arch: str, variant: str, checkpoint_dir: Path,
         f"--output_name_prefix={name_prefix}",
         f"--quantize={quantize}",
         f"--kv_cache_max_len={kv_cache_max_len}",
-        f"--model_size={variant}",
     ]
+    # `--model_size` is only defined by converters that have multiple
+    # variants (llama, qwen, gemma, etc.). Single-variant converters
+    # (tiny_llama, deepseek, falcon's only-1b, qwen_vl's only-3b) reject
+    # the flag with "FATAL Flags parsing error: Unknown command line flag".
+    if len(entry["variants"]) > 1:
+        cmd.append(f"--model_size={variant}")
     for n in prefill_seq_lens:
         cmd.append(f"--prefill_seq_lens={n}")
     log("running ai-edge-torch convert_to_tflite:")
@@ -294,7 +309,13 @@ def main(argv: list[str]) -> int:
     p.add_argument("--quantize", default="dynamic_int8", choices=QUANTIZE_CHOICES)
     p.add_argument("--kv-cache-max-len", type=int, default=1280)
     p.add_argument("--prefill-seq-lens", type=int, nargs="+",
-                   default=[64, 128, 512, 1024])
+                   default=[128, 1024],
+                   help="Each value adds a separate prefill signature trace + "
+                        "convert pass; conversion time scales linearly. The "
+                        "default pair covers short prompts (128) and full-context "
+                        "(1024). For fastest conversion at the cost of "
+                        "less efficient prefill on intermediate lengths, use "
+                        "just '--prefill-seq-lens 1024'.")
     p.add_argument("--workdir", type=Path,
                    help="Working directory for intermediate files (default: temp dir).")
     p.add_argument("--hf-token", help="HuggingFace access token "

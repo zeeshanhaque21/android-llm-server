@@ -88,8 +88,8 @@ def classify(gguf: Path) -> tuple[str | None, str | None, str | None]:
     return repo, arch, None
 
 
-def run_one(repo: str, arch: str, out: Path, quantize: str,
-            workdir: Path | None) -> tuple[str, int, str]:
+def run_one(repo: str, arch: str, variant: str | None, out: Path, quantize: str,
+            workdir: Path | None, threads_per_worker: int) -> tuple[str, int, str]:
     """Run a single conversion. Returns (label, exit_code, last_lines)."""
     label = f"{repo} -> {out.name}"
     cmd = [
@@ -97,11 +97,20 @@ def run_one(repo: str, arch: str, out: Path, quantize: str,
         "--hf", repo, "--arch", arch,
         "--out", str(out), "--quantize", quantize,
     ]
+    if variant:
+        cmd += ["--variant", variant]
     if workdir:
         cmd += ["--workdir", str(workdir)]
-    log(f"start: {label}")
+    # Pin threads so parallel workers don't oversubscribe the CPU.
+    # torch / TF / OpenBLAS / MKL all read these env vars.
+    env = os.environ.copy()
+    for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+              "MKL_NUM_THREADS", "TF_NUM_INTRAOP_THREADS",
+              "TF_NUM_INTEROP_THREADS"):
+        env[k] = str(threads_per_worker)
+    log(f"start: {label} (threads={threads_per_worker})")
     t0 = time.monotonic()
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env)
     dur = time.monotonic() - t0
     tail = "\n".join((p.stdout + p.stderr).splitlines()[-15:])
     if p.returncode == 0:
@@ -136,25 +145,47 @@ def main(argv: list[str]) -> int:
     jobs: list[tuple[str, str, Path]] = []
     skipped: list[tuple[str, str]] = []
 
-    for repo in args.hf:
-        # For HF inputs we can't easily know arch without downloading; let
-        # the per-model script's auto-detect path handle it. Pass arch=None
-        # by using a sentinel that triggers the fallback.
-        # But our per-model script REQUIRES --arch. So we ask the user to
-        # provide arch via the form 'arch:repo' if needed; otherwise we
-        # try a small heuristic on the repo name.
-        arch_hint = None
-        rl = repo.lower()
-        for k in ARCH_TABLE.keys():
-            if k.replace("_", "") in rl.replace("-", "").replace("_", ""):
-                arch_hint = k
-                break
+    import re
+    # Try longer arch keys first so 'tiny_llama' wins over 'llama' for
+    # 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'.
+    arch_keys_desc = sorted(ARCH_TABLE.keys(), key=len, reverse=True)
+
+    def infer_variant(repo: str, arch: str) -> str | None:
+        """Pick a variant from the repo name (e.g. '1.5B' -> '1.5b').
+
+        Snaps to whatever ARCH_TABLE[arch]['variants'] declares — picks the
+        closest match by parameter count when an exact match isn't found.
+        """
+        variants = ARCH_TABLE[arch]["variants"]
+        m = re.search(r"(\d+(?:[._]\d+)?)\s*b", repo, re.IGNORECASE)
+        if not m:
+            return None
+        size = m.group(1).replace("_", ".") + "b"
+        if size.lower() in [v.lower() for v in variants]:
+            return next(v for v in variants if v.lower() == size.lower())
+        # No exact match — return None so caller defaults to first variant
+        # and we surface a warning rather than guessing wrong.
+        return None
+
+    for raw in args.hf:
+        # Allow `repo@variant` to override variant inference.
+        if "@" in raw:
+            repo, variant_override = raw.split("@", 1)
+        else:
+            repo, variant_override = raw, None
+
+        rl = repo.lower().replace("-", "").replace("_", "")
+        arch_hint = next(
+            (k for k in arch_keys_desc if k.replace("_", "") in rl),
+            None,
+        )
         if not arch_hint:
             skipped.append((repo, "couldn't infer architecture from repo name; "
                             "use convert_to_litertlm.py directly with --arch"))
             continue
+        variant = variant_override or infer_variant(repo, arch_hint)
         out = args.out_dir / (repo.replace("/", "_") + ".litertlm")
-        jobs.append((repo, arch_hint, out))
+        jobs.append((repo, arch_hint, variant, out))
 
     if args.dir:
         for gguf in discover_ggufs(args.dir):
@@ -163,7 +194,7 @@ def main(argv: list[str]) -> int:
                 skipped.append((str(gguf), why))
                 continue
             out = args.out_dir / (gguf.stem + ".litertlm")
-            jobs.append((repo, arch, out))
+            jobs.append((repo, arch, None, out))  # let per-model script default variant
 
     if not jobs and not skipped:
         log("no models found. Pass --dir <path> or --hf <repo>.")
@@ -172,22 +203,31 @@ def main(argv: list[str]) -> int:
     log(f"queued {len(jobs)} job(s); skipping {len(skipped)} input(s).")
     for path, why in skipped:
         log(f"  skip: {path}  ({why})")
-    for repo, arch, out in jobs:
-        log(f"  plan: {repo}  ({arch}) -> {out}")
+    for repo, arch, variant, out in jobs:
+        v = variant or "(default)"
+        log(f"  plan: {repo}  ({arch}/{v}) -> {out}")
 
     if not jobs:
         return 1
+
+    # Pin each worker to ~half the cores when JOBS>1 so torch/TF don't
+    # oversubscribe the CPU. With JOBS=1, give the worker everything.
+    cores = os.cpu_count() or 8
+    threads_per_worker = max(1, cores // max(1, args.jobs))
+    log(f"using {args.jobs} parallel worker(s), {threads_per_worker} threads each "
+        f"(host has {cores} cores)")
 
     # Spawn workers. Concurrency is capped by --jobs; each gets a unique
     # workdir under --workdir-root if provided.
     results: list[tuple[str, int, str]] = []
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         futures = []
-        for i, (repo, arch, out) in enumerate(jobs):
+        for i, (repo, arch, variant, out) in enumerate(jobs):
             wd = (args.workdir_root / f"worker-{i}") if args.workdir_root else None
             if wd is not None:
                 wd.mkdir(parents=True, exist_ok=True)
-            futures.append(pool.submit(run_one, repo, arch, out, args.quantize, wd))
+            futures.append(pool.submit(run_one, repo, arch, variant, out,
+                                       args.quantize, wd, threads_per_worker))
         for fut in cf.as_completed(futures):
             results.append(fut.result())
 
