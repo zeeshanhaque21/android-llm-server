@@ -41,7 +41,7 @@ GH_REPO ?= $(shell git config --get remote.origin.url 2>/dev/null | sed -E 's#.*
 
 .PHONY: help setup submodules build debug release install install-release run \
         logcat stop uninstall clean distclean lint test tag publish publish-draft \
-        apk-info devices convert-model convert-setup
+        apk-info devices convert-model convert-batch convert-setup
 
 help:
 	@echo "android-llm-server — make targets"
@@ -68,6 +68,9 @@ help:
 	@echo "  convert-model  Convert HF or GGUF -> .litertlm. Usage:"
 	@echo "                   make convert-model HF=meta-llama/Llama-3.2-1B-Instruct OUT=~/llama.litertlm"
 	@echo "                   make convert-model GGUF=~/qwen.gguf OUT=~/qwen.litertlm"
+	@echo "  convert-batch  Parallel convert every *.gguf in a directory (each worker"
+	@echo "                 needs ~18 GB RAM; default 2 jobs). Usage:"
+	@echo "                   make convert-batch DIR=~/Downloads JOBS=2"
 	@echo ""
 	@echo "  tag            Create git tag $(TAG) at HEAD"
 	@echo "  publish        Build release APK and upload to GitHub release $(TAG)"
@@ -154,13 +157,19 @@ QUANT ?= dynamic_int8
 CONVERT_VENV ?= $(HOME)/.venvs/litertlm-convert
 
 convert-setup:
+	@# ai-edge-torch's hard dep on Python 3.9-3.11 forces a pinned interpreter.
+	@# Use uv (https://docs.astral.sh/uv/) so we don't need root to install
+	@# a side-by-side Python — and its venv is faster than stdlib venv.
+	@command -v uv >/dev/null 2>&1 || (echo \
+	  "uv not found. Install with: curl -LsSf https://astral.sh/uv/install.sh | sh" \
+	  && exit 1)
+	@uv python install 3.11 >/dev/null
 	@if [ ! -d "$(CONVERT_VENV)" ]; then \
-	  echo "[convert] creating venv at $(CONVERT_VENV)"; \
-	  python3 -m venv "$(CONVERT_VENV)"; \
+	  echo "[convert] creating Python 3.11 venv at $(CONVERT_VENV)"; \
+	  uv venv "$(CONVERT_VENV)" --python 3.11 --quiet; \
 	fi
-	@. "$(CONVERT_VENV)/bin/activate" && \
-	  pip install --upgrade pip && \
-	  pip install -r scripts/convert_to_litertlm.requirements.txt
+	@VIRTUAL_ENV="$(CONVERT_VENV)" uv pip install \
+	  -r scripts/convert_to_litertlm.requirements.txt
 	@echo "[convert] activate the venv with:  source $(CONVERT_VENV)/bin/activate"
 
 convert-model:
@@ -175,6 +184,24 @@ convert-model:
 	 [ -n "$(VARIANT)" ] && ARGS="$$ARGS --variant $(VARIANT)"; \
 	 . "$(CONVERT_VENV)/bin/activate" && \
 	 python3 scripts/convert_to_litertlm.py $$SRC --out $(OUT) --quantize $(QUANT) $$ARGS
+
+# Batch driver: scan a directory of GGUFs (or pass a list of HF repos via
+# HFS="repo1 repo2 ...") and convert in parallel. JOBS bounds RAM use —
+# each worker is ~18 GB. Output filenames are derived from inputs.
+DIR    ?=
+HFS    ?=
+JOBS   ?= 2
+OUTDIR ?= $(HOME)/Downloads
+convert-batch:
+	@if [ ! -d "$(CONVERT_VENV)" ]; then \
+	  echo "[convert] venv missing — run 'make convert-setup' first"; exit 1; \
+	fi
+	@test -n "$(DIR)$(HFS)" || (echo "Pass DIR=<path> and/or HFS=\"repo1 repo2\"" && exit 1)
+	@HFFLAGS=""; for r in $(HFS); do HFFLAGS="$$HFFLAGS --hf $$r"; done; \
+	 DIRFLAG=$$(if [ -n "$(DIR)" ]; then echo "--dir $(DIR)"; else echo ""; fi); \
+	 . "$(CONVERT_VENV)/bin/activate" && \
+	 python3 scripts/convert_batch.py $$DIRFLAG $$HFFLAGS \
+	   --out-dir "$(OUTDIR)" --quantize $(QUANT) --jobs $(JOBS)
 
 # ---------- publishing ----------
 

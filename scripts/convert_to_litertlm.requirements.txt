@@ -12,6 +12,12 @@ litert-lm-builder>=0.1
 huggingface_hub>=0.25
 transformers>=4.45
 sentencepiece>=0.2
-# torch is pulled in transitively by ai-edge-torch; pinning it explicitly
-# avoids a surprise upgrade if their lower bound moves.
-torch>=2.4,<2.6
+# ai-edge-torch's generative.layers.lora hard-imports
+# tensorflow.lite.python.schema_py_generated but doesn't declare TF as a
+# dep. Without this the conversion falls over with ModuleNotFoundError
+# the first time the qwen/llama/etc converter loads.
+tensorflow>=2.15
+# torch comes in transitively from ai-edge-torch — let it pick a
+# compatible version. Explicit pinning collides with the constraint
+# graph (ai-edge-torch only supports Python 3.9-3.11; the venv is
+# pinned to 3.11 in the Makefile to satisfy that).

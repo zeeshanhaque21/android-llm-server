@@ -157,7 +157,13 @@ def detect_arch_from_gguf(meta: dict[str, str]) -> Optional[str]:
     if not arch:
         return None
     # GGUF arch names map onto our table mostly 1:1, with some normalisation.
-    aliases = {"gemma2": "gemma", "llama3": "llama"}
+    # Qwen 1/2/2.5/3 GGUFs all report variant strings; ai-edge-torch's
+    # generative.examples.qwen handles them via the same converter.
+    aliases = {
+        "gemma2": "gemma", "gemma_2": "gemma",
+        "llama3": "llama",
+        "qwen2": "qwen", "qwen2.5": "qwen", "qwen3": "qwen",
+    }
     return aliases.get(arch, arch)
 
 
@@ -220,22 +226,30 @@ def run_tflite_conversion(arch: str, variant: str, checkpoint_dir: Path,
     return produced
 
 
-def find_tokenizer(checkpoint_dir: Path) -> Path:
-    """Locate a tokenizer.model (sentencepiece) in the HF checkpoint."""
+def find_tokenizer(checkpoint_dir: Path) -> tuple[Path, str]:
+    """Find the tokenizer in an HF checkpoint.
+
+    Returns (path, kind) where kind is "sp" for SentencePiece (.model)
+    or "hf" for HuggingFace tokenizer.json (BPE). Both are accepted by
+    litert-lm-builder via the `sp_tokenizer` / `hf_tokenizer` subcommands.
+    """
     for name in ("tokenizer.model", "spiece.model"):
         p = checkpoint_dir / name
         if p.exists():
-            return p
+            return p, "sp"
+    p = checkpoint_dir / "tokenizer.json"
+    if p.exists():
+        return p, "hf"
     fail(
-        f"Could not find a SentencePiece tokenizer ('tokenizer.model' or "
-        f"'spiece.model') in {checkpoint_dir}. The litert-lm-builder needs "
-        f"one to bundle the .litertlm. Some HF repos only ship 'tokenizer.json' "
-        f"(BPE) — those aren't directly supported here yet."
+        f"No tokenizer found in {checkpoint_dir}. Looked for "
+        f"tokenizer.model / spiece.model (SentencePiece) and "
+        f"tokenizer.json (HuggingFace BPE)."
     )
-    return Path()  # unreachable
+    return Path(), ""  # unreachable
 
 
 def run_litertlm_bundle(tflite_files: list[Path], tokenizer: Path,
+                        tokenizer_kind: str,
                         out_path: Path, model_label: str) -> None:
     """Bundle .tflite + tokenizer into a .litertlm file via litert-lm-builder."""
     cmd = [
@@ -248,7 +262,10 @@ def run_litertlm_bundle(tflite_files: list[Path], tokenizer: Path,
     for tf in tflite_files:
         kind = "embedder" if "embed" in tf.name.lower() else "prefill_decode"
         cmd += ["tflite_model", "--path", str(tf), "--model_type", kind]
-    cmd += ["sp_tokenizer", "--path", str(tokenizer)]
+    if tokenizer_kind == "sp":
+        cmd += ["sp_tokenizer", "--path", str(tokenizer)]
+    else:
+        cmd += ["hf_tokenizer", "--path", str(tokenizer)]
     cmd += ["output", "--path", str(out_path)]
     log("running litert-lm-builder:")
     log("  " + " ".join(cmd))
@@ -338,16 +355,22 @@ def main(argv: list[str]) -> int:
             prefill_seq_lens=args.prefill_seq_lens,
         )
 
-        tokenizer = find_tokenizer(ckpt_dir)
+        tokenizer, tokenizer_kind = find_tokenizer(ckpt_dir)
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        run_litertlm_bundle(tflite_files, tokenizer, args.out,
+        run_litertlm_bundle(tflite_files, tokenizer, tokenizer_kind, args.out,
                             model_label=f"{repo} ({args.arch}/{args.variant}, {args.quantize})")
         log(f"DONE. wrote {args.out} ({args.out.stat().st_size / 1e6:.1f} MB)")
         log("Push to phone with:  adb push "
             f"{args.out} /sdcard/Download/")
+        succeeded = True
     finally:
-        if work_owned:
+        # Only nuke an auto-created workdir if everything succeeded —
+        # the .tflite intermediates take many minutes to produce, and
+        # if bundling failed we want them around for a hand-retry.
+        if work_owned and locals().get("succeeded"):
             shutil.rmtree(workdir, ignore_errors=True)
+        elif work_owned:
+            log(f"keeping workdir {workdir} for inspection (delete manually)")
 
     return 0
 
