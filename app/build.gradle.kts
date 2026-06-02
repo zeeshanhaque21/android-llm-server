@@ -45,8 +45,8 @@ android {
         applicationId = "com.zeeshan.androidllmserver"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.4.1"
 
         ndk {
             // arm64 only. We don't use emulators (see CLAUDE.md testing
@@ -155,6 +155,12 @@ dependencies {
     // kernels. Models are .litertlm (TFLite-derived) and pulled from
     // HuggingFace's litert-community org. The Maven artifact bundles
     // the prebuilt accelerator .so files; no native build needed.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    //
+    // Pinned to 0.12.0 (not latest.release): the post-2026-05-05 Gemma 4
+    // E2B build ships a vision encoder with 3 signatures and the embedded
+    // speculative-decoding draft model. The older 0.10.2 runtime rejects
+    // it ("Vision Encoder model must have exactly one signature but got 3")
+    // and OOMs on GPU. 0.12.0 is the runtime released alongside that model.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.12.0")
     debugImplementation(libs.androidx.ui.tooling)
 }
