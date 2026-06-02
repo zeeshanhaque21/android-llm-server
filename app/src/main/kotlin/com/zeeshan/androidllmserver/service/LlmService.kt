@@ -148,6 +148,7 @@ class LlmService : Service() {
                         useGpu = serverPrefs.useGpu,
                         nThreads = serverPrefs.nThreads,
                         nCtx = serverPrefs.nCtx,
+                        speculativeDecoding = serverPrefs.speculativeDecoding,
                     )
                     liteRtBridge = lr
                     bridge = null

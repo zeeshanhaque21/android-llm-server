@@ -44,6 +44,11 @@ class ServerPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_USE_GPU, false)
         set(value) { prefs.edit().putBoolean(KEY_USE_GPU, value).apply() }
 
+    /** Speculative decoding for LiteRT-LM (.litertlm). On by default. */
+    var speculativeDecoding: Boolean
+        get() = prefs.getBoolean(KEY_SPECULATIVE, true)
+        set(value) { prefs.edit().putBoolean(KEY_SPECULATIVE, value).apply() }
+
     var plusEnabled: Boolean
         get() = prefs.getBoolean(KEY_PLUS_ENABLED, false)
         set(value) { prefs.edit().putBoolean(KEY_PLUS_ENABLED, value).apply() }
@@ -68,6 +73,7 @@ class ServerPreferences(context: Context) {
         private const val KEY_N_THREADS = "n_threads"
         private const val KEY_TEMPERATURE = "temperature"
         private const val KEY_USE_GPU = "use_gpu"
+        private const val KEY_SPECULATIVE = "speculative_decoding"
         private const val KEY_PLUS_ENABLED = "plus_enabled"
         private const val KEY_SAMSUNG_WARNING_DISMISSED = "samsung_warning_dismissed"
     }

@@ -50,10 +50,11 @@ class LiteRtBridge : InferenceBackend {
         useGpu: Boolean = true,
         nThreads: Int = 8,
         nCtx: Int = 8192,
+        speculativeDecoding: Boolean = true,
     ) {
         check(engine == null) { "LiteRT engine already loaded" }
-        Log.i(TAG, "loading LiteRT model: $modelPath (gpu=$useGpu, threads=$nThreads, ctx=$nCtx, speculative=on)")
-        ExperimentalFlags.enableSpeculativeDecoding = true
+        Log.i(TAG, "loading LiteRT model: $modelPath (gpu=$useGpu, threads=$nThreads, ctx=$nCtx, speculative=$speculativeDecoding)")
+        ExperimentalFlags.enableSpeculativeDecoding = speculativeDecoding
         val cfg = EngineConfig(
             modelPath = modelPath,
             backend = if (useGpu) Backend.GPU() else Backend.CPU(numOfThreads = nThreads),
@@ -64,7 +65,7 @@ class LiteRtBridge : InferenceBackend {
         val e = Engine(cfg)
         e.initialize()
         engine = e
-        Log.i(TAG, "LiteRT model loaded (speculative decoding on)")
+        Log.i(TAG, "LiteRT model loaded (speculative=$speculativeDecoding)")
     }
 
     /** Text-only single-shot completion as a Flow of partial chunks. */

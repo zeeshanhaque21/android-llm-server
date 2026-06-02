@@ -51,6 +51,7 @@ fun SettingsDialog(
     var portText by remember { mutableStateOf(prefs.httpPort.toString()) }
     var autoStart by remember { mutableStateOf(prefs.autoStartOnBoot) }
     var useGpu by remember { mutableStateOf(prefs.useGpu) }
+    var speculativeDecoding by remember { mutableStateOf(prefs.speculativeDecoding) }
 
     // Auth state
     var authEnabled by remember { mutableStateOf(authManager.authEnabled) }
@@ -148,6 +149,29 @@ fun SettingsDialog(
                         onCheckedChange = {
                             useGpu = it
                             prefs.useGpu = it
+                        },
+                    )
+                }
+
+                // Speculative decoding toggle (LiteRT-LM)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Speculative decoding", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "LiteRT-LM only: draft model proposes tokens for faster decode. Restart server to apply.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = speculativeDecoding,
+                        onCheckedChange = {
+                            speculativeDecoding = it
+                            prefs.speculativeDecoding = it
                         },
                     )
                 }
