@@ -55,8 +55,8 @@ class ServerPreferences(context: Context) {
     companion object {
         const val PREFS_NAME = "llm_server_prefs"
         const val DEFAULT_HTTP_PORT = 8085
-        const val DEFAULT_N_CTX = 2048
-        const val DEFAULT_N_THREADS = 4
+        const val DEFAULT_N_CTX = 8192
+        const val DEFAULT_N_THREADS = 8
         const val DEFAULT_TEMPERATURE = 0.7f
 
         private const val KEY_AUTO_START = "autostart"

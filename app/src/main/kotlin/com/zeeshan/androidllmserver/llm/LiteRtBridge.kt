@@ -6,6 +6,8 @@ import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
@@ -30,22 +32,39 @@ class LiteRtBridge : InferenceBackend {
     /**
      * Load a .litertlm model.
      *
-     * useGpu hints which backend to prefer for the LLM body. Vision
-     * stays on GPU (Adreno OpenCL is great at conv ops) and audio on
-     * CPU (the audio encoder is small and CPU-faster).
+     * useGpu hints which backend to run the LLM body on. Vision stays on
+     * GPU (Adreno OpenCL is great at conv ops) and audio on CPU (the audio
+     * encoder is small and CPU-faster). [nThreads] only matters for the CPU
+     * backend; [nCtx] becomes maxNumTokens — the kv-cache size, i.e. the sum
+     * of input + output tokens the engine will hold.
+     *
+     * Speculative decoding is enabled by default: a small fast "draft" model
+     * proposes several tokens that the full model verifies in parallel, which
+     * speeds up decode on the post-2026-05-05 Gemma 4 E2B .litertlm build that
+     * ships the draft. The flag is a global experimental toggle the engine
+     * reads at create time, so we set it right before constructing the Engine.
      */
-    suspend fun load(modelPath: String, useGpu: Boolean = true) {
+    @OptIn(ExperimentalApi::class)
+    suspend fun load(
+        modelPath: String,
+        useGpu: Boolean = true,
+        nThreads: Int = 8,
+        nCtx: Int = 8192,
+    ) {
         check(engine == null) { "LiteRT engine already loaded" }
-        Log.i(TAG, "loading LiteRT model: $modelPath (gpu=$useGpu)")
+        Log.i(TAG, "loading LiteRT model: $modelPath (gpu=$useGpu, threads=$nThreads, ctx=$nCtx, speculative=on)")
+        ExperimentalFlags.enableSpeculativeDecoding = true
         val cfg = EngineConfig(
             modelPath = modelPath,
+            backend = if (useGpu) Backend.GPU() else Backend.CPU(numOfThreads = nThreads),
             visionBackend = Backend.GPU(),
-            audioBackend = Backend.CPU(),
+            audioBackend = Backend.CPU(numOfThreads = nThreads),
+            maxNumTokens = nCtx,
         )
         val e = Engine(cfg)
         e.initialize()
         engine = e
-        Log.i(TAG, "LiteRT model loaded")
+        Log.i(TAG, "LiteRT model loaded (speculative decoding on)")
     }
 
     /** Text-only single-shot completion as a Flow of partial chunks. */

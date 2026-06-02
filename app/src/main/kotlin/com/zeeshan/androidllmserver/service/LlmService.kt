@@ -143,7 +143,12 @@ class LlmService : Service() {
             try {
                 if (isLiteRt) {
                     val lr = com.zeeshan.androidllmserver.llm.LiteRtBridge()
-                    lr.load(modelPath, useGpu = serverPrefs.useGpu)
+                    lr.load(
+                        modelPath,
+                        useGpu = serverPrefs.useGpu,
+                        nThreads = serverPrefs.nThreads,
+                        nCtx = serverPrefs.nCtx,
+                    )
                     liteRtBridge = lr
                     bridge = null
                     sdBridge = null
