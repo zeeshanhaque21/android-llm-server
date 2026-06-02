@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Cancelling the collecting coroutine calls `nativeCancel()`, which flips an
  * atomic flag the native decode loop checks every iteration.
  */
-class LlmBridge {
+class LlmBridge : InferenceBackend {
 
     private val handle = AtomicLong(0L)
 
@@ -34,11 +34,11 @@ class LlmBridge {
     @Volatile private var mmCapsBits: Int = 0
 
     /** True if the currently loaded model has a vision encoder. */
-    val supportsVision: Boolean get() = (mmCapsBits and 0x1) != 0
+    override val supportsVision: Boolean get() = (mmCapsBits and 0x1) != 0
     /** True if the currently loaded model has an audio encoder. */
-    val supportsAudio:  Boolean get() = (mmCapsBits and 0x2) != 0
+    override val supportsAudio:  Boolean get() = (mmCapsBits and 0x2) != 0
     /** True if the currently loaded model can accept any non-text input. */
-    val supportsMultimodal: Boolean get() = mmCapsBits != 0
+    override val supportsMultimodal: Boolean get() = mmCapsBits != 0
 
     /**
      * Load a text-only model, or a multimodal model when `mmprojPath` is
@@ -65,7 +65,7 @@ class LlmBridge {
         }
     }
 
-    fun generate(prompt: String, maxTokens: Int = 256): Flow<String> = channelFlow {
+    override fun generate(prompt: String, maxTokens: Int): Flow<String> = channelFlow {
         val h = handle.get()
         check(h != 0L) { "model not loaded" }
 
@@ -90,14 +90,16 @@ class LlmBridge {
      * `<__media__>` marker for each element of [media] in the order the
      * HTTP/UI layer assembled them. Each media entry is the raw encoded
      * bytes of an image (JPEG/PNG) or audio (MP3/WAV/FLAC) — libmtmd
-     * decodes them internally via stb_image / miniaudio.
+     * decodes them internally via stb_image / miniaudio and ignores the
+     * image/audio distinction (it sniffs the bytes), so we just forward
+     * the raw bytes in order.
      *
      * Only valid when the model was loaded with an mmproj path.
      */
-    fun generateMultimodal(
+    override fun generateMultimodal(
         prompt: String,
-        media: List<ByteArray>,
-        maxTokens: Int = 256,
+        media: List<MediaInput>,
+        maxTokens: Int,
     ): Flow<String> = channelFlow {
         val h = handle.get()
         check(h != 0L) { "model not loaded" }
@@ -107,14 +109,14 @@ class LlmBridge {
 
         val cb = TokenCallback { tok -> trySend(tok) }
         try {
-            val n = nativeGenerateMm(h, prompt, media.toTypedArray(), maxTokens, cb)
+            val n = nativeGenerateMm(h, prompt, media.map { it.bytes }.toTypedArray(), maxTokens, cb)
             if (n < 0) error("nativeGenerateMm returned $n")
         } finally {
             nativeCancel(h)
         }
     }.flowOn(inferenceDispatcher)
 
-    suspend fun free() {
+    override suspend fun free() {
         withContext(inferenceDispatcher) {
             val h = handle.getAndSet(0L)
             if (h != 0L) nativeFree(h)

@@ -66,8 +66,15 @@ class LlmService : Service() {
     var sdBridge: SdBridge? = null
         private set
 
+    // Google's LiteRT-LM engine, used for .litertlm models that ship
+    // hand-tuned Adreno OpenCL kernels (faster than ggml-opencl on
+    // Snapdragon). At most one of bridge / sdBridge / liteRtBridge is
+    // non-null at a time.
+    var liteRtBridge: com.zeeshan.androidllmserver.llm.LiteRtBridge? = null
+        private set
+
     val isModelLoaded: Boolean
-        get() = bridge != null || sdBridge != null
+        get() = bridge != null || sdBridge != null || liteRtBridge != null
 
     val isImageModel: Boolean
         get() = sdBridge != null
@@ -129,9 +136,19 @@ class LlmService : Service() {
             val modelFileName = modelPath.substringAfterLast('/')
             val isSD = modelPath.endsWith(".safetensors", ignoreCase = true) ||
                        modelPath.endsWith(".ckpt", ignoreCase = true)
+            val isLiteRt = modelPath.endsWith(".litertlm", ignoreCase = true) ||
+                           modelPath.endsWith(".task", ignoreCase = true)
 
+            var loadError: String? = null
             try {
-                if (isSD) {
+                if (isLiteRt) {
+                    val lr = com.zeeshan.androidllmserver.llm.LiteRtBridge()
+                    lr.load(modelPath, useGpu = serverPrefs.useGpu)
+                    liteRtBridge = lr
+                    bridge = null
+                    sdBridge = null
+                    Log.i(TAG, "LiteRT model loaded: $modelPath")
+                } else if (isSD) {
                     SdBridge.ensureNativeLoaded()
                     val sb = SdBridge()
                     // Force CPU for SD — Vulkan init crashes on some Adreno drivers
@@ -139,6 +156,7 @@ class LlmService : Service() {
                     sb.load(modelPath, useGpu = false)
                     sdBridge = sb
                     bridge = null
+                    liteRtBridge = null
                     Log.i(TAG, "SD model loaded: $modelPath")
                 } else {
                     LlmBridge.ensureNativeLoaded()
@@ -156,29 +174,41 @@ class LlmService : Service() {
                     )
                     bridge = b
                     sdBridge = null
+                    liteRtBridge = null
                     Log.i(TAG, "LLM model loaded: $modelPath${if (mmproj != null) " + mmproj" else ""}")
                 }
                 serverPrefs.lastModelPath = modelPath
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load model", e)
-                updateNotification("LLM Server — error: ${e.message}")
-                return@launch
+                loadError = e.message ?: "model load failed"
+                bridge = null
+                sdBridge = null
+                liteRtBridge = null
             }
 
-            // Start HTTP server now that the model is loaded.
+            // Start the HTTP server REGARDLESS of load outcome. /health and
+            // /v1/models must always answer so a client can distinguish "server
+            // down" from "server up, model failed to load". On failure the chat
+            // routes return 503 carrying loadError instead of a blanket 404.
             try {
+                // Both engines implement InferenceBackend; pick whichever loaded.
+                val textBackend: com.zeeshan.androidllmserver.llm.InferenceBackend? = liteRtBridge ?: bridge
                 httpServer = LlmHttpServer(
-                    bridge = bridge,
+                    backend = textBackend,
                     modelName = modelFileName,
                     port = HTTP_PORT,
                     authManager = authManager,
                     sdBridge = sdBridge,
+                    loadError = loadError,
                 ).also { it.start() }
-                updateNotification("LLM Server — idle (port $HTTP_PORT)")
-                Log.i(TAG, "HTTP server started on port $HTTP_PORT")
+                updateNotification(
+                    if (loadError == null) "LLM Server — idle (port $HTTP_PORT)"
+                    else "LLM Server — load failed, API up on $HTTP_PORT (see /health)"
+                )
+                Log.i(TAG, "HTTP server started on port $HTTP_PORT (loadError=$loadError)")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start HTTP server", e)
-                updateNotification("LLM Server — model loaded, HTTP error: ${e.message}")
+                updateNotification("LLM Server — HTTP error: ${e.message}")
             }
         }
     }
@@ -200,6 +230,12 @@ class LlmService : Service() {
                 Log.e(TAG, "Error freeing SD model", e)
             }
             sdBridge = null
+            try {
+                liteRtBridge?.free()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error freeing LiteRT model", e)
+            }
+            liteRtBridge = null
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

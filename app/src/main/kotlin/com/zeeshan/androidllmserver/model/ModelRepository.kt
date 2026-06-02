@@ -14,7 +14,7 @@ class ModelRepository(private val context: Context) {
     fun getModelsDir(): File = context.getExternalFilesDir(null)
         ?: throw IllegalStateException("External files dir unavailable")
 
-    private val modelExtensions = setOf("gguf", "safetensors", "ckpt")
+    private val modelExtensions = setOf("gguf", "safetensors", "ckpt", "litertlm", "task")
 
     /**
      * Sidecar multimodal projector suffix. Co-located with the main GGUF as

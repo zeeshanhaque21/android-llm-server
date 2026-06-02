@@ -125,10 +125,11 @@ private fun formatChatPrompt(messages: List<ChatMsg>, modelName: String = ""): S
 fun ChatScreen(
     bridge: LlmBridge?,
     sdBridge: com.zeeshan.androidllmserver.sd.SdBridge? = null,
+    liteRtBridge: com.zeeshan.androidllmserver.llm.LiteRtBridge? = null,
     modelName: String,
     onBack: () -> Unit,
 ) {
-    val isImageModel = sdBridge != null && bridge == null
+    val isImageModel = sdBridge != null && bridge == null && liteRtBridge == null
     val context = LocalContext.current
     val prefs = remember { ServerPreferences(context) }
     val messages = remember { mutableStateListOf<ChatMsg>() }
@@ -597,7 +598,7 @@ fun ChatScreen(
                         // Record audio (live mic). Long-press/secondary flow
                         // is intentionally omitted — users who want to attach
                         // an existing audio file can POST one to the HTTP API.
-                        val audioSupported = bridge?.supportsAudio == true
+                        val audioSupported = bridge?.supportsAudio == true || liteRtBridge?.supportsAudio == true
                         Surface(
                             shape = CircleShape,
                             color = if (isRecordingAudio) MaterialTheme.colorScheme.errorContainer
@@ -637,7 +638,7 @@ fun ChatScreen(
                         val hasAnyAttachment = attachedImageBytes != null || attachedAudioBytes != null
                         val canSend = !isGenerating &&
                             (inputText.isNotBlank() || hasAnyAttachment) &&
-                            (bridge != null || sdBridge != null)
+                            (bridge != null || sdBridge != null || liteRtBridge != null)
                         Surface(
                             shape = CircleShape,
                             color = if (canSend) {
@@ -654,13 +655,14 @@ fun ChatScreen(
                                     val audioBytes = attachedAudioBytes
                                     val hasAttachments = imageBytes != null || audioBytes != null
                                     if (text.isEmpty() && !hasAttachments) return@IconButton
-                                    if (bridge == null && sdBridge == null) return@IconButton
+                                    if (bridge == null && sdBridge == null && liteRtBridge == null) return@IconButton
 
                                     // Stash the media bytes for the generate flow before clearing
                                     // the composer state. The prompt gets one <__media__> marker
                                     // per attached item so mtmd_tokenize interleaves the chunks.
                                     val sendImageBytes = imageBytes
                                     val sendAudioBytes = audioBytes
+                                    val sendAudioFormat = attachedAudioFormat
 
                                     // User-visible content for the chat bubble (no <__media__>).
                                     val userContent = buildString {
@@ -701,10 +703,13 @@ fun ChatScreen(
                                     }
                                     val prompt = formatChatPrompt(promptMessages, modelName)
 
-                                    // Collect media bytes in the same order as the markers above.
-                                    val mediaBytes = buildList<ByteArray> {
-                                        if (sendImageBytes != null) add(sendImageBytes)
-                                        if (sendAudioBytes != null) add(sendAudioBytes)
+                                    // Collect media in the same order as the markers above.
+                                    val mediaInputs = buildList<com.zeeshan.androidllmserver.llm.MediaInput> {
+                                        if (sendImageBytes != null)
+                                            add(com.zeeshan.androidllmserver.llm.MediaInput.Image(sendImageBytes))
+                                        if (sendAudioBytes != null)
+                                            add(com.zeeshan.androidllmserver.llm.MediaInput.Audio(
+                                                sendAudioBytes, sendAudioFormat ?: "wav"))
                                     }
 
                                     // Add empty assistant message for streaming
@@ -740,7 +745,7 @@ fun ChatScreen(
                                                     isStreaming = false,
                                                 )
                                             }
-                                          } else if (bridge != null) {
+                                          } else if (bridge != null || liteRtBridge != null) {
                                             // LLM text generation mode
                                             // Buffer-based thinking tag detection that handles
                                             // tokens split across tag boundaries.
@@ -750,10 +755,16 @@ fun ChatScreen(
                                             // Raw accumulator to detect tags that span tokens
                                             val rawBuf = StringBuilder()
 
-                                            val tokenFlow = if (mediaBytes.isNotEmpty() && bridge.supportsMultimodal) {
-                                                bridge.generateMultimodal(prompt, mediaBytes, maxTokens = configMaxTokens)
+                                            // Both engines implement InferenceBackend, so dispatch
+                                            // is identical: prefer LiteRT-LM (Adreno-tuned OpenCL)
+                                            // when present, else llama.cpp. Multimodal when media is
+                                            // attached and the model advertises support.
+                                            val backend: com.zeeshan.androidllmserver.llm.InferenceBackend =
+                                                liteRtBridge ?: bridge!!
+                                            val tokenFlow = if (mediaInputs.isNotEmpty() && backend.supportsMultimodal) {
+                                                backend.generateMultimodal(prompt, mediaInputs, maxTokens = configMaxTokens)
                                             } else {
-                                                bridge.generate(prompt, maxTokens = configMaxTokens)
+                                                backend.generate(prompt, maxTokens = configMaxTokens)
                                             }
                                             tokenFlow.collect { token ->
                                                 rawBuf.append(token)
@@ -854,7 +865,7 @@ fun ChatScreen(
                                             val mmInfo = if (bridge != null) {
                                                 "vision=${bridge.supportsVision} audio=${bridge.supportsAudio}"
                                             } else "no bridge"
-                                            val mediaInfo = "media=${mediaBytes.size}"
+                                            val mediaInfo = "media=${mediaInputs.size}"
                                             val trace = e.stackTraceToString().lines().take(8).joinToString("\n")
                                             val errText = buildString {
                                                 append("⚠️ ${e::class.simpleName}: ${e.message}\n\n")

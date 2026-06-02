@@ -42,3 +42,8 @@ keystore.properties
 app/src/main/cpp/third_party/*
 !app/src/main/cpp/third_party/OpenCL-Headers/
 !app/src/main/cpp/third_party/opencl-stub/
+
+# Kotlin compiler caches / transient build artifacts
+.kotlin/
+default.profraw
+scripts/__pycache__/

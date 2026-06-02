@@ -12,6 +12,11 @@ data class CatalogEntry(
     val sizeBytes: Long,
     val description: String,
     val type: String = "llm",   // "llm" or "image"
+    // Inference engine hint: "llama-cpp" (GGUF), "litert-lm" (.litertlm), or
+    // "stable-diffusion" (image). Advisory only — the service selects the
+    // backend by file extension at load time — but it documents intent in the
+    // catalog and lets the UI label models by runtime.
+    val runtime: String? = null,
     val plus: Boolean = false,  // hidden unless Plus enabled in settings
     // Optional multimodal projector sidecar (vision / audio encoder).
     // When set, the downloader fetches it next to the main model as

@@ -101,10 +101,23 @@ private fun parseBlocks(text: String): List<MdBlock> {
                 if (i < lines.size) i++ // skip closing fence
                 continue
             }
-            // Headings
-            trimmed.startsWith("### ") -> { flushPara(); out.add(MdBlock.Heading(3, trimmed.removePrefix("### "))); i++; continue }
-            trimmed.startsWith("## ")  -> { flushPara(); out.add(MdBlock.Heading(2, trimmed.removePrefix("## ")));  i++; continue }
-            trimmed.startsWith("# ")   -> { flushPara(); out.add(MdBlock.Heading(1, trimmed.removePrefix("# ")));   i++; continue }
+            // Headings: support all six levels, with or without space after the hashes.
+            // Some models emit "####Heading" or "## **Heading**"; we normalise by
+            // stripping leading hashes and any single trailing space.
+            trimmed.startsWith("#") -> {
+                var hashes = 0
+                while (hashes < 6 && hashes < trimmed.length && trimmed[hashes] == '#') hashes++
+                if (hashes in 1..6 && (hashes == trimmed.length || trimmed[hashes] == ' ' || trimmed[hashes] == '#')) {
+                    flushPara()
+                    val text = trimmed.drop(hashes).trimStart()
+                    out.add(MdBlock.Heading(hashes, text))
+                    i++; continue
+                }
+                // not actually a heading (e.g. "#1234" hashtag) — fall through to paragraph
+                if (paraBuf.isNotEmpty()) paraBuf.append('\n')
+                paraBuf.append(line)
+                i++; continue
+            }
             // Bullet lists
             trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
                 flushPara()
@@ -198,10 +211,11 @@ fun MarkdownText(
                 )
                 is MdBlock.Heading -> {
                     val headingStyle = when (block.level) {
-                        1 -> MaterialTheme.typography.titleLarge
-                        2 -> MaterialTheme.typography.titleMedium
+                        1 -> MaterialTheme.typography.headlineSmall
+                        2 -> MaterialTheme.typography.titleLarge
+                        3 -> MaterialTheme.typography.titleMedium
                         else -> MaterialTheme.typography.titleSmall
-                    }.copy(color = color)
+                    }.copy(color = color, fontWeight = FontWeight.Bold)
                     Text(text = buildInline(block.text), style = headingStyle)
                 }
                 is MdBlock.CodeBlock -> Text(

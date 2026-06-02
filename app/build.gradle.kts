@@ -45,8 +45,8 @@ android {
         applicationId = "com.zeeshan.androidllmserver"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         ndk {
             // arm64 only. We don't use emulators (see CLAUDE.md testing
@@ -104,7 +104,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    // kotlinOptions { jvmTarget = "17" } was removed in Kotlin 2.3 —
+    // use the compilerOptions DSL instead.
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
     buildFeatures { compose = true }
     packaging {
         resources {
@@ -143,5 +149,12 @@ dependencies {
     implementation(libs.ktor.server.cors)
     implementation(libs.ktor.server.status.pages)
     implementation(libs.kotlinx.serialization.json)
+    // LiteRT-LM (Google AI Edge) — second inference engine that uses
+    // Adreno-tuned OpenCL kernels for actual GPU acceleration on
+    // Snapdragon, where ggml-opencl falls back to slow generic
+    // kernels. Models are .litertlm (TFLite-derived) and pulled from
+    // HuggingFace's litert-community org. The Maven artifact bundles
+    // the prebuilt accelerator .so files; no native build needed.
+    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
     debugImplementation(libs.androidx.ui.tooling)
 }

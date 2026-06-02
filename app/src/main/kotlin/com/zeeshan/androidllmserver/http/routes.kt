@@ -1,6 +1,6 @@
 package com.zeeshan.androidllmserver.http
 
-import com.zeeshan.androidllmserver.llm.LlmBridge
+import com.zeeshan.androidllmserver.llm.InferenceBackend
 import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -13,52 +13,92 @@ import java.util.UUID
 private val json = Json { encodeDefaults = true }
 
 /**
- * Install all OpenAI-compatible routes into the Ktor routing tree.
+ * Status/discovery routes that are ALWAYS registered, independent of whether
+ * a model loaded. This is the fix for the silent-failure bug: a client must be
+ * able to hit /health and /v1/models and learn the model state instead of
+ * getting a blanket 404 when load fails or the selected runtime can't serve.
  *
- * @param bridge  the LlmBridge instance that owns the loaded model
- * @param modelName  human-readable name shown in /v1/models (e.g. "qwen2.5:1.5b-q4_k_m")
+ * @param modelName  the loaded model's name, or null when nothing is loaded
+ * @param modelLoaded  true if any inference/image model is serving
+ * @param loadError  human-readable load failure, surfaced via /health
  */
-fun Routing.installOpenAiRoutes(bridge: LlmBridge, modelName: String) {
+fun Routing.installStatusRoutes(modelName: String?, modelLoaded: Boolean, loadError: String?) {
 
     get("/health") {
-        call.respond(mapOf("status" to "ok"))
-    }
-
-    get("/v1/models") {
-        val now = System.currentTimeMillis() / 1000
         call.respond(
-            ModelsResponse(
-                data = listOf(
-                    ModelInfo(id = modelName, created = now)
-                )
+            HealthResponse(
+                modelLoaded = modelLoaded,
+                model = modelName.takeIf { modelLoaded },
+                error = loadError,
             )
         )
     }
 
+    get("/v1/models") {
+        val now = System.currentTimeMillis() / 1000
+        val data = if (modelLoaded && modelName != null) listOf(ModelInfo(id = modelName, created = now))
+                   else emptyList()
+        call.respond(ModelsResponse(data = data))
+    }
+
+    get("/api/tags") {
+        val now = System.currentTimeMillis() / 1000
+        val models = if (modelLoaded && modelName != null) listOf(
+            OllamaModelEntry(
+                name = modelName,
+                model = modelName,
+                modifiedAt = java.time.Instant.ofEpochSecond(now).toString(),
+            )
+        ) else emptyList()
+        call.respond(OllamaTagsResponse(models = models))
+    }
+}
+
+/**
+ * Install the OpenAI-compatible chat route. Registered unconditionally so the
+ * path never 404s; when [backend] is null (model failed to load or the runtime
+ * couldn't serve) it returns a clear 503 carrying [loadError].
+ *
+ * @param backend  the engine (llama.cpp or LiteRT-LM) that owns the loaded model, or null
+ * @param modelName  human-readable name echoed in responses
+ */
+fun Routing.installOpenAiRoutes(backend: InferenceBackend?, modelName: String, loadError: String?) {
+
     post("/v1/chat/completions") {
+        if (backend == null) return@post call.respondModelUnavailable(loadError)
+
         val request = call.receive<ChatCompletionRequest>()
         val (prompt, media) = buildPromptAndMedia(request.messages, modelName)
         val requestId = "chatcmpl-${UUID.randomUUID()}"
         val created = System.currentTimeMillis() / 1000
         val effectiveModel = request.model.ifBlank { modelName }
 
-        // Route: use multimodal path only when the bridge actually has an
-        // mmproj loaded AND the request carries media.
-        val useMm = media.isNotEmpty() && bridge.supportsMultimodal
+        // Route: use multimodal path only when the backend actually supports
+        // non-text input AND the request carries media.
+        val useMm = media.isNotEmpty() && backend.supportsMultimodal
 
         if (request.stream) {
-            handleStreaming(call, bridge, prompt, media, useMm, request, requestId, created, effectiveModel)
+            handleStreaming(call, backend, prompt, media, useMm, request, requestId, created, effectiveModel)
         } else {
-            handleNonStreaming(call, bridge, prompt, media, useMm, request, requestId, created, effectiveModel)
+            handleNonStreaming(call, backend, prompt, media, useMm, request, requestId, created, effectiveModel)
         }
     }
+}
+
+private suspend fun io.ktor.server.application.ApplicationCall.respondModelUnavailable(loadError: String?) {
+    val msg = loadError ?: "No model loaded"
+    respondText(
+        text = """{"error":{"message":"${msg.replace("\"", "\\\"")}","type":"model_not_loaded"}}""",
+        contentType = ContentType.Application.Json,
+        status = HttpStatusCode.ServiceUnavailable,
+    )
 }
 
 // ── Non-streaming handler ───────────────────────────────────────────────────
 
 private suspend fun handleNonStreaming(
     call: io.ktor.server.application.ApplicationCall,
-    bridge: LlmBridge,
+    backend: InferenceBackend,
     prompt: String,
     media: List<MediaPart>,
     useMm: Boolean,
@@ -68,9 +108,9 @@ private suspend fun handleNonStreaming(
     model: String,
 ) {
     val tokens = if (useMm) {
-        bridge.generateMultimodal(prompt, media.map { it.bytes() }, request.maxTokens).toList()
+        backend.generateMultimodal(prompt, media.map { it.toMediaInput() }, request.maxTokens).toList()
     } else {
-        bridge.generate(prompt, request.maxTokens).toList()
+        backend.generate(prompt, request.maxTokens).toList()
     }
     val fullText = tokens.joinToString("")
 
@@ -102,7 +142,7 @@ private suspend fun handleNonStreaming(
 
 private suspend fun handleStreaming(
     call: io.ktor.server.application.ApplicationCall,
-    bridge: LlmBridge,
+    backend: InferenceBackend,
     prompt: String,
     media: List<MediaPart>,
     useMm: Boolean,
@@ -129,9 +169,9 @@ private suspend fun handleStreaming(
         // Stream tokens
         try {
             val flow = if (useMm) {
-                bridge.generateMultimodal(prompt, media.map { it.bytes() }, request.maxTokens)
+                backend.generateMultimodal(prompt, media.map { it.toMediaInput() }, request.maxTokens)
             } else {
-                bridge.generate(prompt, request.maxTokens)
+                backend.generate(prompt, request.maxTokens)
             }
             flow.collect { token ->
                 val chunk = ChatCompletionChunk(
@@ -171,20 +211,11 @@ private suspend fun handleStreaming(
 
 // ── Ollama-compatible routes ─────────────────────────────────────────────────
 
-fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
-
-    get("/api/tags") {
-        val now = System.currentTimeMillis() / 1000
-        call.respond(OllamaTagsResponse(
-            models = listOf(OllamaModelEntry(
-                name = modelName,
-                model = modelName,
-                modifiedAt = java.time.Instant.ofEpochSecond(now).toString(),
-            ))
-        ))
-    }
+fun Routing.installOllamaRoutes(backend: InferenceBackend?, modelName: String, loadError: String?) {
 
     post("/api/chat") {
+        if (backend == null) return@post call.respondModelUnavailable(loadError)
+
         val body = call.receiveText()
         val req = Json.decodeFromString<OllamaChatRequest>(body)
 
@@ -200,7 +231,7 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
             InboundMessage(m.role, parts)
         }
         val (prompt, media) = buildPromptAndMedia(inbound, modelName)
-        val useMm = media.isNotEmpty() && bridge.supportsMultimodal
+        val useMm = media.isNotEmpty() && backend.supportsMultimodal
         val model = req.model.ifBlank { modelName }
         val stream = req.stream
 
@@ -209,9 +240,9 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
             call.respondTextWriter(contentType = ContentType.Application.Json) {
                 try {
                     val flow = if (useMm) {
-                        bridge.generateMultimodal(prompt, media.map { it.bytes() }, 256)
+                        backend.generateMultimodal(prompt, media.map { it.toMediaInput() }, 256)
                     } else {
-                        bridge.generate(prompt, 256)
+                        backend.generate(prompt, 256)
                     }
                     flow.collect { token ->
                         val chunk = OllamaChatResponse(
@@ -236,9 +267,9 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
             }
         } else {
             val tokens = if (useMm) {
-                bridge.generateMultimodal(prompt, media.map { it.bytes() }, 256).toList()
+                backend.generateMultimodal(prompt, media.map { it.toMediaInput() }, 256).toList()
             } else {
-                bridge.generate(prompt, 256).toList()
+                backend.generate(prompt, 256).toList()
             }
             val fullText = tokens.joinToString("")
             call.respond(OllamaChatResponse(
@@ -253,15 +284,6 @@ fun Routing.installOllamaRoutes(bridge: LlmBridge, modelName: String) {
 // ── Prompt formatting ───────────────────────────────────────────────────────
 
 private const val MEDIA_MARKER = "<__media__>"
-
-/**
- * Extension that yields the raw encoded bytes of any [MediaPart] variant.
- * libmtmd handles JPEG/PNG/WAV/MP3/FLAC byte-level decoding internally.
- */
-internal fun MediaPart.bytes(): ByteArray = when (this) {
-    is MediaPart.Image -> bytes
-    is MediaPart.Audio -> bytes
-}
 
 /**
  * Build the prompt string and ordered media list for inference.

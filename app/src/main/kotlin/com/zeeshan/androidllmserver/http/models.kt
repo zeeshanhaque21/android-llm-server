@@ -1,6 +1,7 @@
 package com.zeeshan.androidllmserver.http
 
 import android.util.Base64
+import com.zeeshan.androidllmserver.llm.MediaInput
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -41,6 +42,12 @@ sealed class MediaPart {
     data class Image(val bytes: ByteArray) : MediaPart()
     /** format: "mp3", "wav", "flac", etc. libmtmd auto-detects by sniffing bytes. */
     data class Audio(val bytes: ByteArray, val format: String) : MediaPart()
+}
+
+/** Translate a parsed HTTP media part into the backend-neutral [MediaInput]. */
+internal fun MediaPart.toMediaInput(): MediaInput = when (this) {
+    is MediaPart.Image -> MediaInput.Image(bytes)
+    is MediaPart.Audio -> MediaInput.Audio(bytes, format)
 }
 
 /**
@@ -210,6 +217,20 @@ data class Delta(
 data class ModelsResponse(
     @SerialName("object") val obj: String = "list",
     val data: List<ModelInfo>,
+)
+
+// ── Health endpoint ──────────────────────────────────────────────────────────
+//
+// Always available, regardless of model-load outcome, so a client can tell the
+// difference between "server down" (connection refused) and "server up but the
+// model failed to load" (200 with model_loaded=false + an error string).
+
+@Serializable
+data class HealthResponse(
+    val status: String = "ok",
+    @SerialName("model_loaded") val modelLoaded: Boolean,
+    val model: String? = null,
+    val error: String? = null,
 )
 
 // ── Ollama-compatible DTOs ───────────────────────────────────────────────────

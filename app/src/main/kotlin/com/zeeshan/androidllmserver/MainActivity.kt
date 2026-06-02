@@ -604,6 +604,7 @@ class MainActivity : ComponentActivity() {
                             ChatScreen(
                                 bridge = llmService?.bridge,
                                 sdBridge = llmService?.sdBridge,
+                                liteRtBridge = llmService?.liteRtBridge,
                                 modelName = modelLabel,
                                 onBack = { currentScreen = Screen.SERVER },
                             )

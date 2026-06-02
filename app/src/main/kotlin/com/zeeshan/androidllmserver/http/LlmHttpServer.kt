@@ -2,7 +2,7 @@ package com.zeeshan.androidllmserver.http
 
 import android.util.Log
 import com.zeeshan.androidllmserver.auth.AuthManager
-import com.zeeshan.androidllmserver.llm.LlmBridge
+import com.zeeshan.androidllmserver.llm.InferenceBackend
 import com.zeeshan.androidllmserver.sd.SdBridge
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -27,11 +27,14 @@ import kotlinx.serialization.json.Json
 private const val TAG = "LlmHttpServer"
 
 class LlmHttpServer(
-    private val bridge: LlmBridge?,
+    private val backend: InferenceBackend?,
     private val modelName: String,
     private val port: Int = 8085,
     private val authManager: AuthManager? = null,
     private val sdBridge: SdBridge? = null,
+    // Non-null when model load failed; surfaced via /health and as a 503 on
+    // the chat routes so a failed load is never a blanket 404.
+    private val loadError: String? = null,
 ) {
     private var server: EmbeddedServer<NettyApplicationEngine, NettyApplicationEngine.Configuration>? = null
 
@@ -125,10 +128,26 @@ class LlmHttpServer(
 
     private fun Application.configureRouting() {
         routing {
-            if (bridge != null) {
-                installOpenAiRoutes(bridge, modelName)
-                installOllamaRoutes(bridge, modelName)
-            }
+            // A model counts as "loaded" if either a text engine (llama.cpp /
+            // LiteRT-LM) or the image engine (stable-diffusion) is serving.
+            val modelLoaded = backend != null || sdBridge?.isLoaded == true
+
+            // Lightweight in-browser chat client at `/` (text + image + audio).
+            // Unauthenticated page; it calls /v1 with a bearer token the user
+            // enters once and we keep in the browser's localStorage.
+            installWebUiRoutes()
+
+            // ALWAYS registered — the fix for the 404-on-everything bug.
+            installStatusRoutes(
+                modelName = modelName.takeIf { modelLoaded },
+                modelLoaded = modelLoaded,
+                loadError = loadError,
+            )
+
+            // Registered unconditionally too; they return 503 (not 404) when
+            // no text backend is available.
+            installOpenAiRoutes(backend, modelName, loadError)
+            installOllamaRoutes(backend, modelName, loadError)
             installImageRoutes(sdBridge)
         }
     }

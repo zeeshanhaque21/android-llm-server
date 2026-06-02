@@ -1,5 +1,14 @@
 [
   {
+    "name": "Gemma 4 E2B (LiteRT-LM, Adreno-tuned GPU)",
+    "fileName": "gemma-4-E2B-it.litertlm",
+    "url": "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm",
+    "sizeBytes": 2770000000,
+    "description": "Google AI Edge LiteRT-LM build of Gemma 4 E2B. Uses hand-tuned Adreno OpenCL kernels (the same path Edge Gallery uses) for actual GPU acceleration on Snapdragon. Multimodal: accepts text, images, and audio natively (no mmproj sidecar needed).",
+    "type": "llm",
+    "runtime": "litert-lm"
+  },
+  {
     "name": "Gemma 4 E2B (multimodal: text+image+audio)",
     "fileName": "gemma-4-e2b-it-q4_k_m.gguf",
     "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",

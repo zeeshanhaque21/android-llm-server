@@ -144,6 +144,7 @@ Java_com_zeeshan_androidllmserver_llm_LlmBridge_nativeGenerate(
         LOGE("nativeGenerate: invalid context");
         return -1;
     }
+    LOGI("nativeGenerate: start (n_predict=%d)", (int) nPredict);
     c->cancel.store(false);
 
     // Reset sampler + KV cache for a fresh single-shot completion.
